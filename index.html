@@ -31,7 +31,7 @@
 </head>
 <body>
 <canvas id="c" width="900" height="520"></canvas>
-<div id="controls">A/D: Move &nbsp;|&nbsp; S: Jump &nbsp;|&nbsp; F: Swing Bat &nbsp;|&nbsp; R: Restart</div>
+<div id="controls">← →: Move &nbsp;|&nbsp; ↑: Jump &nbsp;|&nbsp; ↓: Swing Bat &nbsp;|&nbsp; R: Restart</div>
 <script>
 const canvas = document.getElementById('c');
 const dispCtx = canvas.getContext('2d');
@@ -51,7 +51,7 @@ ctx.scale(1 / PSCALE, 1 / PSCALE);
 const keys = {};
 document.addEventListener('keydown', e => {
   keys[e.code] = true;
-  if (['KeyS','KeyA','KeyD','KeyF'].includes(e.code))
+  if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code))
     e.preventDefault();
 });
 document.addEventListener('keyup', e => { keys[e.code] = false; });
@@ -60,46 +60,46 @@ document.addEventListener('keyup', e => { keys[e.code] = false; });
 const GRAVITY   = 0.55;
 const WALK_SPD  = 6.0;
 const JUMP_VEL  = -13.5;
-const SWING_DUR = 22;   // frames
-const SWING_HIT_START = 6;   // frame swing hitbox becomes active
-const SWING_HIT_END   = 18;  // frame hitbox deactivates
+const SWING_DUR = 12;
+const SWING_HIT_START = 3;
+const SWING_HIT_END   = 10;
 
 // ── Platforms ────────────────────────────────────────────────────────────────
 const platforms = [
-  { x:   0, y: 460, w: 280, h: 25 },
-  { x: 430, y: 460, w: 120, h: 25 },
-  { x: 680, y: 460, w: 180, h: 25 },
+  { x:   0, y: 460, w: 250, h: 25 },
+  { x: 430, y: 460, w: 130, h: 25 },
+  { x: 680, y: 460, w: 160, h: 25 },
   { x: 990, y: 460, w: 140, h: 25 },
-  { x:1260, y: 460, w: 100, h: 25 },
-  { x:1490, y: 460, w: 260, h: 25 },
-  { x:1880, y: 460, w: 180, h: 25 },
-  { x:2200, y: 460, w: 120, h: 25 },
+  { x:1260, y: 460, w: 110, h: 25 },
+  { x:1490, y: 460, w: 210, h: 25 },
+  { x:1880, y: 460, w: 160, h: 25 },
+  { x:2200, y: 460, w: 130, h: 25 },
   // extended ground
-  { x:2450, y: 460, w: 160, h: 25 },   // [18]
-  { x:2720, y: 460, w: 180, h: 25 },   // [19]
-  { x:3010, y: 460, w: 140, h: 25 },   // [20]
-  { x:3260, y: 460, w: 180, h: 25 },   // [21]
-  { x:3550, y: 460, w: 200, h: 25 },   // [22]
-  { x:3860, y: 460, w: 160, h: 25 },   // [23]
+  { x:2450, y: 460, w: 140, h: 25 },
+  { x:2720, y: 460, w: 150, h: 25 },
+  { x:3010, y: 460, w: 130, h: 25 },
+  { x:3260, y: 460, w: 150, h: 25 },
+  { x:3550, y: 460, w: 160, h: 25 },
+  { x:3860, y: 460, w: 200, h: 25 },
   // elevated (original)
-  { x: 270, y: 360, w: 130, h: 20 },   // [24]
-  { x: 500, y: 340, w: 110, h: 20 },   // [25]
-  { x: 690, y: 300, w: 110, h: 20 },   // [26]
-  { x: 880, y: 370, w: 140, h: 20 },   // [27]
-  { x:1080, y: 310, w: 110, h: 20 },   // [28]
-  { x:1310, y: 350, w: 100, h: 20 },   // [29]
-  { x:1530, y: 330, w: 120, h: 20 },   // [30]
-  { x:1730, y: 370, w: 130, h: 20 },   // [31]
-  { x:1940, y: 310, w: 120, h: 20 },   // [32]
-  { x:2100, y: 350, w: 120, h: 20 },   // [33]
+  { x: 270, y: 360, w: 110, h: 20 },
+  { x: 500, y: 340, w: 100, h: 20 },
+  { x: 690, y: 300, w: 100, h: 20 },
+  { x: 880, y: 370, w: 110, h: 20 },
+  { x:1080, y: 310, w: 100, h: 20 },
+  { x:1310, y: 350, w: 100, h: 20 },
+  { x:1530, y: 330, w: 110, h: 20 },
+  { x:1730, y: 370, w: 110, h: 20 },
+  { x:1940, y: 310, w: 100, h: 20 },
+  { x:2100, y: 350, w: 110, h: 20 },
   // elevated (extended)
-  { x:2510, y: 350, w: 120, h: 20 },   // [34]
-  { x:2790, y: 310, w: 110, h: 20 },   // [35]
-  { x:3060, y: 360, w: 120, h: 20 },   // [36]
-  { x:3310, y: 330, w: 110, h: 20 },   // [37]
-  { x:3460, y: 380, w: 130, h: 20 },   // [38]
-  { x:3630, y: 320, w: 120, h: 20 },   // [39]
-  { x:3790, y: 370, w: 130, h: 20 },   // [40]
+  { x:2510, y: 350, w: 110, h: 20 },
+  { x:2790, y: 310, w: 100, h: 20 },
+  { x:3060, y: 360, w: 110, h: 20 },
+  { x:3310, y: 330, w: 100, h: 20 },
+  { x:3460, y: 380, w: 110, h: 20 },
+  { x:3630, y: 320, w: 110, h: 20 },
+  { x:3790, y: 370, w: 100, h: 20 },
 ];
 
 // ── Enemies ──────────────────────────────────────────────────────────────────
@@ -198,6 +198,9 @@ function batHitbox() {
     return { x: player.x - reach,    y: player.y + 14, w: reach, h };
 }
 
+// ── Cave (end of level) ──────────────────────────────────────────────────────
+const cave = { x: 4060, y: 350, w: 60, h: 110 };
+
 // ── Game state ───────────────────────────────────────────────────────────────
 let gameOver = false;
 let won = false;
@@ -245,22 +248,22 @@ function update() {
   }
 
   // Horizontal
-  if (keys['KeyA'])  { player.vx = -WALK_SPD; player.facing = -1; }
-  else if (keys['KeyD']) { player.vx =  WALK_SPD; player.facing =  1; }
+  if (keys['ArrowLeft'])  { player.vx = -WALK_SPD; player.facing = -1; }
+  else if (keys['ArrowRight']) { player.vx =  WALK_SPD; player.facing =  1; }
   else player.vx *= 0.65;
 
   if (Math.abs(player.vx) > 0.2 && player.onGround)
     player.walkCycle += 0.25;
 
   // Jump
-  if (keys['KeyS'] && player.onGround) {
+  if (keys['ArrowUp'] && player.onGround) {
     player.vy = JUMP_VEL;
     player.onGround = false;
     burst(player.x + player.w / 2, player.y + player.h, ['#C8A050','#8B6914'], 5);
   }
 
   // Swing
-  if (keys['KeyF'] && !player.swinging) {
+  if (keys['ArrowDown'] && !player.swinging) {
     player.swinging = true;
     player.swingFrame = 0;
   }
@@ -358,12 +361,76 @@ function update() {
   camX += (targetCamX - camX) * 0.1;
   camX = Math.max(0, camX);
 
-  // Win condition
-  if (enemies.every(e => !e.alive)) won = true;
+  // Win condition: walk into the cave
+  if (overlaps(player, cave)) won = true;
 }
 
 // ── Draw helpers ─────────────────────────────────────────────────────────────
 function sx(worldX) { return worldX - camX; }
+
+function drawCave() {
+  const cx = sx(4020);
+  const groundY = 460;
+
+  // Rocky cliff body
+  ctx.fillStyle = '#5A4535';
+  ctx.beginPath();
+  ctx.moveTo(cx,       groundY);
+  ctx.lineTo(cx,       groundY - 140);
+  ctx.lineTo(cx + 40,  groundY - 190);
+  ctx.lineTo(cx + 80,  groundY - 210);
+  ctx.lineTo(cx + 130, groundY - 180);
+  ctx.lineTo(cx + 170, groundY - 130);
+  ctx.lineTo(cx + 170, groundY);
+  ctx.closePath();
+  ctx.fill();
+
+  // Rock highlight / lighter face
+  ctx.fillStyle = '#7A6050';
+  ctx.beginPath();
+  ctx.moveTo(cx + 10,  groundY - 10);
+  ctx.lineTo(cx + 10,  groundY - 130);
+  ctx.lineTo(cx + 50,  groundY - 180);
+  ctx.lineTo(cx + 90,  groundY - 195);
+  ctx.lineTo(cx + 90,  groundY - 10);
+  ctx.closePath();
+  ctx.fill();
+
+  // Dark cave opening (arch)
+  ctx.fillStyle = '#0d0a08';
+  ctx.beginPath();
+  ctx.arc(cx + 55, groundY - 70, 38, Math.PI, 0);
+  ctx.rect(cx + 17, groundY - 70, 76, 75);
+  ctx.fill();
+
+  // Cave inner shadow gradient
+  ctx.fillStyle = 'rgba(0,0,0,0.5)';
+  ctx.fillRect(cx + 17, groundY - 70, 76, 75);
+
+  // Stalactites inside
+  ctx.fillStyle = '#2a1e14';
+  for (let i = 0; i < 4; i++) {
+    const sx2 = cx + 24 + i * 18;
+    ctx.beginPath();
+    ctx.moveTo(sx2,      groundY - 105);
+    ctx.lineTo(sx2 + 7,  groundY - 105);
+    ctx.lineTo(sx2 + 3,  groundY - 88);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // Rock edge details
+  ctx.fillStyle = '#3d2e20';
+  ctx.fillRect(cx,      groundY - 145, 12, 30);
+  ctx.fillRect(cx + 55, groundY - 195, 18, 20);
+  ctx.fillRect(cx + 140, groundY - 120, 14, 25);
+
+  // "CAVE" sign arrow / glow around entrance
+  ctx.fillStyle = 'rgba(255,180,60,0.18)';
+  ctx.beginPath();
+  ctx.arc(cx + 55, groundY - 70, 50, Math.PI, 0);
+  ctx.fill();
+}
 
 // Background sky + parallax
 function drawBG() {
@@ -758,7 +825,7 @@ function drawOverlay() {
   if (won) {
     ctx.fillStyle = '#FFD700';
     ctx.font = 'bold 80px monospace';
-    ctx.fillText('YOU WIN!', W / 2, H / 2);
+    ctx.fillText('Level Complete!', W / 2, H / 2);
   } else {
     ctx.fillStyle = '#FF3030';
     ctx.font = 'bold 80px monospace';
@@ -788,6 +855,7 @@ function loop() {
   ctx.clearRect(0, 0, W, H);
   drawBG();
   drawPlatforms();
+  drawCave();
   drawParticles();
 
   for (const e of enemies) {
