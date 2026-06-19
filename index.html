@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Caveman Crusher</title>
+  <title>Prehistoric Peril</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -47,11 +47,47 @@ const ctx = off.getContext('2d');
 ctx.imageSmoothingEnabled = false;
 ctx.scale(1 / PSCALE, 1 / PSCALE);
 
+// ── Save / Load ──────────────────────────────────────────────────────────────
+const SAVE_KEY = 'prehistoricPeril_save';
+function saveGame()  { localStorage.setItem(SAVE_KEY, JSON.stringify({ level: 1 })); }
+function hasSave()   { return !!localStorage.getItem(SAVE_KEY); }
+
+// ── Title screen ─────────────────────────────────────────────────────────────
+let titleScreen = true;
+let hoveredBtn  = null;   // 'new' | 'load'
+const btnNew  = { x: W / 2 - 160, y: H / 2 + 10,  w: 320, h: 72 };
+const btnLoad = { x: W / 2 - 160, y: H / 2 + 110, w: 320, h: 72 };
+
+function ptInBtn(mx, my, btn) {
+  return mx >= btn.x && mx <= btn.x + btn.w && my >= btn.y && my <= btn.y + btn.h;
+}
+canvas.addEventListener('mousemove', e => {
+  if (!titleScreen) return;
+  const r  = canvas.getBoundingClientRect();
+  const mx = (e.clientX - r.left) * (W / r.width);
+  const my = (e.clientY - r.top)  * (H / r.height);
+  hoveredBtn = ptInBtn(mx, my, btnNew) ? 'new'
+             : ptInBtn(mx, my, btnLoad) ? 'load' : null;
+});
+canvas.addEventListener('click', e => {
+  if (!titleScreen) return;
+  const r  = canvas.getBoundingClientRect();
+  const mx = (e.clientX - r.left) * (W / r.width);
+  const my = (e.clientY - r.top)  * (H / r.height);
+  if (ptInBtn(mx, my, btnNew)) {
+    titleScreen = false;
+    resetGame();
+  } else if (ptInBtn(mx, my, btnLoad) && hasSave()) {
+    titleScreen = false;
+    resetGame();
+  }
+});
+
 // ── Input ───────────────────────────────────────────────────────────────────
 const keys = {};
 let paused = false;
 document.addEventListener('keydown', e => {
-  if (e.code === 'Space') { paused = !paused; e.preventDefault(); return; }
+  if (e.code === 'Space') { if (!titleScreen) paused = !paused; e.preventDefault(); return; }
   keys[e.code] = true;
   if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code))
     e.preventDefault();
@@ -113,7 +149,6 @@ function makeEnemy(x, platRef, speed) {
 }
 
 let enemies = [
-  makeEnemy( 320,  0, 1.2),   // [0]  ground
   makeEnemy( 550,  1, 1.5),   // [1]  ground
   makeEnemy( 780,  2, 1.0),   // [2]  ground
   makeEnemy( 720, 16, 1.2),   // [16] elevated x=690
@@ -136,7 +171,6 @@ let enemies = [
   makeEnemy(3330, 27, 1.8),   // [27] elevated x=3310
   makeEnemy(3580, 12, 1.4),   // [12] ground x=3550
   makeEnemy(3650, 29, 1.9),   // [29] elevated x=3630
-  makeEnemy(3880, 13, 2.0),   // [13] ground x=3860
   makeEnemy(3820, 30, 1.7),   // [30] elevated x=3790
 ];
 
@@ -214,7 +248,6 @@ function resetGame() {
   gameOver = false;
   won = false;
   enemies = [
-    makeEnemy( 320,  0, 1.2),
     makeEnemy( 550,  1, 1.5),
     makeEnemy( 780,  2, 1.0),
     makeEnemy( 720, 16, 1.2),
@@ -237,7 +270,6 @@ function resetGame() {
     makeEnemy(3330, 27, 1.8),
     makeEnemy(3580, 12, 1.4),
     makeEnemy(3650, 29, 1.9),
-    makeEnemy(3880, 13, 2.0),
     makeEnemy(3820, 30, 1.7),
   ];
 }
@@ -365,7 +397,7 @@ function update() {
   camX = Math.max(0, camX);
 
   // Win condition: walk into the cave
-  if (overlaps(player, cave)) won = true;
+  if (overlaps(player, cave)) { won = true; saveGame(); }
 }
 
 // ── Draw helpers ─────────────────────────────────────────────────────────────
@@ -863,22 +895,238 @@ function drawParticles() {
   ctx.globalAlpha = 1;
 }
 
+// ── Title screen draw ────────────────────────────────────────────────────────
+function drawTitleScreen() {
+  // Volcanic sky
+  const sky = ctx.createLinearGradient(0, 0, 0, H);
+  sky.addColorStop(0,   '#0d0500');
+  sky.addColorStop(0.4, '#3a0e00');
+  sky.addColorStop(1,   '#7a2e00');
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, W, H);
+
+  // Lava glow behind volcano
+  const glow = ctx.createRadialGradient(760, 300, 30, 760, 300, 320);
+  glow.addColorStop(0, 'rgba(255,90,0,0.45)');
+  glow.addColorStop(1, 'rgba(255,40,0,0)');
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, 0, W, H);
+
+  // ── VOLCANO ──────────────────────────────────────────────────────────────
+  // Main cone
+  ctx.fillStyle = '#2e1608';
+  ctx.beginPath();
+  ctx.moveTo(490, H); ctx.lineTo(760, 55); ctx.lineTo(1030, H);
+  ctx.closePath(); ctx.fill();
+
+  // Lighter face
+  ctx.fillStyle = '#4a2510';
+  ctx.beginPath();
+  ctx.moveTo(580, H); ctx.lineTo(760, 55); ctx.lineTo(870, H);
+  ctx.closePath(); ctx.fill();
+
+  // Crater glow
+  ctx.fillStyle = '#FF5500';
+  ctx.beginPath(); ctx.ellipse(760, 68, 52, 22, 0, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#FF8800';
+  ctx.beginPath(); ctx.ellipse(760, 68, 32, 13, 0, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#FFD700';
+  ctx.beginPath(); ctx.ellipse(760, 68, 14, 6,  0, 0, Math.PI*2); ctx.fill();
+
+  // Lava flow left
+  ctx.fillStyle = '#FF4400';
+  ctx.beginPath();
+  ctx.moveTo(738, 80);
+  ctx.bezierCurveTo(700,160, 650,220, 635,330);
+  ctx.lineTo(668,330);
+  ctx.bezierCurveTo(678,220, 726,160, 758,80);
+  ctx.closePath(); ctx.fill();
+
+  // Lava flow right
+  ctx.fillStyle = '#FF6600';
+  ctx.beginPath();
+  ctx.moveTo(762, 78);
+  ctx.bezierCurveTo(800,150, 840,210, 855,300);
+  ctx.lineTo(878,300);
+  ctx.bezierCurveTo(864,210, 820,150, 782,78);
+  ctx.closePath(); ctx.fill();
+
+  // Lava pool base
+  ctx.fillStyle = '#FF3300';
+  ctx.beginPath(); ctx.ellipse(760, H-8, 210, 28, 0, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#FF7700';
+  ctx.beginPath(); ctx.ellipse(760, H-8, 120, 16, 0, 0, Math.PI*2); ctx.fill();
+
+  // Fire jets at crater
+  const fireColors = ['#FF2200','#FF6600','#FFB300','#FF4400','#FF8800'];
+  for (let i = 0; i < 5; i++) {
+    ctx.fillStyle = fireColors[i];
+    const fx = 732 + i * 16, fh = 50 + (i%2)*35;
+    ctx.beginPath();
+    ctx.moveTo(fx, 65); ctx.lineTo(fx-10, 65-fh); ctx.lineTo(fx+10, 65-fh);
+    ctx.closePath(); ctx.fill();
+  }
+
+  // Smoke
+  ctx.fillStyle = 'rgba(60,40,30,0.65)';
+  for (const [scx, scy, sr] of [[745,18,26],[768,4,20],[722,12,18],[752,35,14]]) {
+    ctx.beginPath(); ctx.arc(scx, scy, sr, 0, Math.PI*2); ctx.fill();
+  }
+
+  // Ground / lava-lit floor
+  ctx.fillStyle = '#1a0800';
+  ctx.fillRect(0, H - 28, W, 28);
+
+  // ── T-REX ────────────────────────────────────────────────────────────────
+  const bx = 210, by = 480; // base (feet bottom)
+
+  // Tail
+  ctx.fillStyle = '#2a6818';
+  ctx.beginPath();
+  ctx.moveTo(bx - 30, by - 210);
+  ctx.quadraticCurveTo(bx-160, by-180, bx-230, by-250);
+  ctx.quadraticCurveTo(bx-210, by-220, bx-130, by-170);
+  ctx.quadraticCurveTo(bx-60,  by-155, bx-10,  by-185);
+  ctx.closePath(); ctx.fill();
+
+  // Back leg
+  ctx.fillStyle = '#2a6818';
+  ctx.fillRect(bx+40,  by-180, 55, 100); // thigh
+  ctx.fillRect(bx+50,  by-82,  42, 82);  // shin
+  ctx.fillRect(bx+20,  by-8,   90, 22);  // foot
+  ctx.fillRect(bx+14,  by+12,  22, 14);  // toe
+  ctx.fillRect(bx+42,  by+14,  22, 12);
+  ctx.fillRect(bx+68,  by+12,  22, 14);
+
+  // Front leg
+  ctx.fillStyle = '#348a20';
+  ctx.fillRect(bx-20,  by-190, 52, 95);
+  ctx.fillRect(bx-10,  by-97,  40, 80);
+  ctx.fillRect(bx-40,  by-24,  88, 22);
+  ctx.fillRect(bx-46,  by-4,   22, 14);
+  ctx.fillRect(bx-18,  by-2,   22, 12);
+  ctx.fillRect(bx+8,   by-4,   22, 14);
+
+  // Body
+  ctx.fillStyle = '#348a20';
+  ctx.beginPath();
+  ctx.ellipse(bx+20, by-240, 110, 80, -0.15, 0, Math.PI*2);
+  ctx.fill();
+
+  // Belly
+  ctx.fillStyle = '#80c858';
+  ctx.beginPath();
+  ctx.ellipse(bx+40, by-220, 60, 45, -0.1, 0, Math.PI*2);
+  ctx.fill();
+
+  // Spines
+  ctx.fillStyle = '#1a4e0e';
+  for (let i = 0; i < 6; i++) {
+    const spx = bx - 30 + i*22, spy = by - 300 - i*8;
+    ctx.beginPath();
+    ctx.moveTo(spx-8, spy); ctx.lineTo(spx, spy-32); ctx.lineTo(spx+8, spy);
+    ctx.closePath(); ctx.fill();
+  }
+
+  // Neck
+  ctx.fillStyle = '#348a20';
+  ctx.beginPath();
+  ctx.moveTo(bx+80, by-300);
+  ctx.lineTo(bx+170, by-430);
+  ctx.lineTo(bx+200, by-410);
+  ctx.lineTo(bx+110, by-275);
+  ctx.closePath(); ctx.fill();
+
+  // Round skull
+  ctx.fillStyle = '#348a20';
+  ctx.beginPath();
+  ctx.ellipse(bx+168, by-438, 72, 56, 0, 0, Math.PI*2);
+  ctx.fill();
+  // Brow ridge bump
+  ctx.fillStyle = '#1a4e0e';
+  ctx.beginPath();
+  ctx.ellipse(bx+162, by-488, 60, 16, 0.1, 0, Math.PI*2);
+  ctx.fill();
+  // Snout (upper) connecting skull to tip
+  ctx.fillStyle = '#348a20';
+  ctx.fillRect(bx+218, by-462, 80, 58);
+  // Snout tip
+  ctx.fillRect(bx+290, by-464, 20, 108);
+  // Lower jaw
+  ctx.fillStyle = '#2a6818';
+  ctx.fillRect(bx+148, by-396, 148, 36);
+
+  // Teeth upper
+  ctx.fillStyle = '#f0f0d0';
+  for (let i = 0; i < 6; i++) ctx.fillRect(bx+152+i*22, by-390, 14, 18);
+  // Teeth lower
+  for (let i = 0; i < 5; i++) ctx.fillRect(bx+160+i*22, by-370, 14, 16);
+
+  // Eye
+  ctx.fillStyle = '#FFD700';
+  ctx.beginPath(); ctx.arc(bx+182, by-440, 18, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#111';
+  ctx.beginPath(); ctx.arc(bx+184, by-440, 11, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,0.7)';
+  ctx.fillRect(bx+178, by-450, 7, 7);
+
+  // Tiny arm
+  ctx.fillStyle = '#348a20';
+  ctx.fillRect(bx+90, by-305, 28, 44);
+  ctx.fillRect(bx+92, by-264, 34, 14);
+  ctx.fillStyle = '#c8b060';
+  ctx.fillRect(bx+92, by-252, 10, 12);
+  ctx.fillRect(bx+108, by-252, 10, 12);
+
+  // ── UI overlay ───────────────────────────────────────────────────────────
+  ctx.fillStyle = 'rgba(0,0,0,0.42)';
+  ctx.fillRect(0, 0, W, H);
+
+  // Title
+  ctx.textAlign = 'center';
+  ctx.font = 'bold 100px monospace';
+  ctx.fillStyle = '#FF5500';
+  ctx.fillText('PREHISTORIC', W/2, H/2 - 110);
+  ctx.fillStyle = '#FFD700';
+  ctx.fillText('PERIL', W/2, H/2 - 20);
+
+  // NEW GAME button
+  const newHov = hoveredBtn === 'new';
+  ctx.fillStyle = newHov ? '#FFD700' : '#5C3A10';
+  ctx.beginPath(); ctx.roundRect(btnNew.x, btnNew.y, btnNew.w, btnNew.h, 8); ctx.fill();
+  ctx.font = 'bold 56px monospace';
+  ctx.fillStyle = newHov ? '#000' : '#FFD700';
+  ctx.fillText('NEW GAME', W/2, btnNew.y + 50);
+
+  // LOAD GAME button
+  const canLoad = hasSave();
+  const loadHov = hoveredBtn === 'load' && canLoad;
+  ctx.fillStyle = loadHov ? '#FFD700' : (canLoad ? '#5C3A10' : '#333');
+  ctx.beginPath(); ctx.roundRect(btnLoad.x, btnLoad.y, btnLoad.w, btnLoad.h, 8); ctx.fill();
+  ctx.font = 'bold 56px monospace';
+  ctx.fillStyle = loadHov ? '#000' : (canLoad ? '#FFD700' : '#666');
+  ctx.fillText('LOAD GAME', W/2, btnLoad.y + 50);
+}
+
 // ── Game loop ─────────────────────────────────────────────────────────────────
 function loop() {
-  update();
-
   ctx.clearRect(0, 0, W, H);
-  drawBG();
-  drawPlatforms();
-  drawCave();
-  drawParticles();
 
-  for (const e of enemies) {
-    if (e.alive) drawEnemy(e);
+  if (titleScreen) {
+    drawTitleScreen();
+  } else {
+    update();
+    drawBG();
+    drawPlatforms();
+    drawCave();
+    drawParticles();
+    for (const e of enemies) {
+      if (e.alive) drawEnemy(e);
+    }
+    drawPlayer();
+    drawHUD();
+    drawOverlay();
   }
-  drawPlayer();
-  drawHUD();
-  drawOverlay();
 
   // Blit low-res offscreen to display canvas (nearest-neighbour = chunky pixels)
   dispCtx.clearRect(0, 0, W, H);
