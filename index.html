@@ -31,7 +31,7 @@
 </head>
 <body>
 <canvas id="c" width="900" height="520"></canvas>
-<div id="controls">← →: Move &nbsp;|&nbsp; ↑: Jump &nbsp;|&nbsp; ↓: Swing Bat &nbsp;|&nbsp; R: Restart</div>
+<div id="controls">← →: Move &nbsp;|&nbsp; ↑: Jump &nbsp;|&nbsp; ↓: Swing Bat &nbsp;|&nbsp; Space: Pause &nbsp;|&nbsp; R: Restart</div>
 <script>
 const canvas = document.getElementById('c');
 const dispCtx = canvas.getContext('2d');
@@ -49,7 +49,9 @@ ctx.scale(1 / PSCALE, 1 / PSCALE);
 
 // ── Input ───────────────────────────────────────────────────────────────────
 const keys = {};
+let paused = false;
 document.addEventListener('keydown', e => {
+  if (e.code === 'Space') { paused = !paused; e.preventDefault(); return; }
   keys[e.code] = true;
   if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code))
     e.preventDefault();
@@ -57,9 +59,9 @@ document.addEventListener('keydown', e => {
 document.addEventListener('keyup', e => { keys[e.code] = false; });
 
 // ── Constants ────────────────────────────────────────────────────────────────
-const GRAVITY   = 0.55;
+const GRAVITY   = 1.1;
 const WALK_SPD  = 6.0;
-const JUMP_VEL  = -13.5;
+const JUMP_VEL  = -18;
 const SWING_DUR = 12;
 const SWING_HIT_START = 3;
 const SWING_HIT_END   = 10;
@@ -242,6 +244,7 @@ function resetGame() {
 
 // ── Update ───────────────────────────────────────────────────────────────────
 function update() {
+  if (paused) return;
   if (gameOver || won) {
     if (keys['KeyR']) resetGame();
     return;
@@ -817,6 +820,18 @@ function drawHUD() {
 
 // Game over / win overlays
 function drawOverlay() {
+  if (paused) {
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.fillRect(0, 0, W, H);
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 80px monospace';
+    ctx.fillStyle = '#fff';
+    ctx.fillText('PAUSED', W / 2, H / 2);
+    ctx.font = 'bold 44px monospace';
+    ctx.fillStyle = '#C8A862';
+    ctx.fillText('Space to resume', W / 2, H / 2 + 100);
+    return;
+  }
   if (!gameOver && !won) return;
   ctx.fillStyle = 'rgba(0,0,0,0.72)';
   ctx.fillRect(0, 0, W, H);
