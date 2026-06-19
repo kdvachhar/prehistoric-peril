@@ -1,0 +1,810 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Caveman Crusher</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #111;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      font-family: monospace;
+    }
+    canvas {
+      border: 4px solid #8B4513;
+      border-radius: 4px;
+      display: block;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+    }
+    #controls {
+      color: #C8A862;
+      font-size: 13px;
+      margin-top: 8px;
+      letter-spacing: 1px;
+    }
+  </style>
+</head>
+<body>
+<canvas id="c" width="900" height="520"></canvas>
+<div id="controls">A/D: Move &nbsp;|&nbsp; S: Jump &nbsp;|&nbsp; F: Swing Bat &nbsp;|&nbsp; R: Restart</div>
+<script>
+const canvas = document.getElementById('c');
+const dispCtx = canvas.getContext('2d');
+dispCtx.imageSmoothingEnabled = false;
+const W = canvas.width, H = canvas.height;
+
+// Render at 1/4 resolution then blit up for chunky pixel look
+const PSCALE = 4;
+const off = document.createElement('canvas');
+off.width  = Math.ceil(W / PSCALE);
+off.height = Math.ceil(H / PSCALE);
+const ctx = off.getContext('2d');
+ctx.imageSmoothingEnabled = false;
+ctx.scale(1 / PSCALE, 1 / PSCALE);
+
+// ── Input ───────────────────────────────────────────────────────────────────
+const keys = {};
+document.addEventListener('keydown', e => {
+  keys[e.code] = true;
+  if (['KeyS','KeyA','KeyD','KeyF'].includes(e.code))
+    e.preventDefault();
+});
+document.addEventListener('keyup', e => { keys[e.code] = false; });
+
+// ── Constants ────────────────────────────────────────────────────────────────
+const GRAVITY   = 0.55;
+const WALK_SPD  = 6.0;
+const JUMP_VEL  = -13.5;
+const SWING_DUR = 22;   // frames
+const SWING_HIT_START = 6;   // frame swing hitbox becomes active
+const SWING_HIT_END   = 18;  // frame hitbox deactivates
+
+// ── Platforms ────────────────────────────────────────────────────────────────
+const platforms = [
+  { x:   0, y: 460, w: 280, h: 25 },
+  { x: 430, y: 460, w: 120, h: 25 },
+  { x: 680, y: 460, w: 180, h: 25 },
+  { x: 990, y: 460, w: 140, h: 25 },
+  { x:1260, y: 460, w: 100, h: 25 },
+  { x:1490, y: 460, w: 260, h: 25 },
+  { x:1880, y: 460, w: 180, h: 25 },
+  { x:2200, y: 460, w: 120, h: 25 },
+  // extended ground
+  { x:2450, y: 460, w: 160, h: 25 },   // [18]
+  { x:2720, y: 460, w: 180, h: 25 },   // [19]
+  { x:3010, y: 460, w: 140, h: 25 },   // [20]
+  { x:3260, y: 460, w: 180, h: 25 },   // [21]
+  { x:3550, y: 460, w: 200, h: 25 },   // [22]
+  { x:3860, y: 460, w: 160, h: 25 },   // [23]
+  // elevated (original)
+  { x: 270, y: 360, w: 130, h: 20 },   // [24]
+  { x: 500, y: 340, w: 110, h: 20 },   // [25]
+  { x: 690, y: 300, w: 110, h: 20 },   // [26]
+  { x: 880, y: 370, w: 140, h: 20 },   // [27]
+  { x:1080, y: 310, w: 110, h: 20 },   // [28]
+  { x:1310, y: 350, w: 100, h: 20 },   // [29]
+  { x:1530, y: 330, w: 120, h: 20 },   // [30]
+  { x:1730, y: 370, w: 130, h: 20 },   // [31]
+  { x:1940, y: 310, w: 120, h: 20 },   // [32]
+  { x:2100, y: 350, w: 120, h: 20 },   // [33]
+  // elevated (extended)
+  { x:2510, y: 350, w: 120, h: 20 },   // [34]
+  { x:2790, y: 310, w: 110, h: 20 },   // [35]
+  { x:3060, y: 360, w: 120, h: 20 },   // [36]
+  { x:3310, y: 330, w: 110, h: 20 },   // [37]
+  { x:3460, y: 380, w: 130, h: 20 },   // [38]
+  { x:3630, y: 320, w: 120, h: 20 },   // [39]
+  { x:3790, y: 370, w: 130, h: 20 },   // [40]
+];
+
+// ── Enemies ──────────────────────────────────────────────────────────────────
+function makeEnemy(x, platRef, speed) {
+  const plat = platforms[platRef];
+  return { x, y: plat.y - 44, w: 44, h: 44, vx: speed * 1.8, dir: 1,
+           alive: true, hp: 1, maxHp: 1, platRef,
+           hitFlash: 0 };
+}
+
+let enemies = [
+  makeEnemy( 320,  0, 1.2),   // [0]  ground
+  makeEnemy( 550,  1, 1.5),   // [1]  ground
+  makeEnemy( 780,  2, 1.0),   // [2]  ground
+  makeEnemy( 720, 16, 1.2),   // [16] elevated x=690
+  makeEnemy( 920, 17, 1.4),   // [17] elevated x=880
+  makeEnemy(1100, 18, 1.0),   // [18] elevated x=1080
+  makeEnemy(1050,  3, 1.6),   // [3]  ground
+  makeEnemy(1340, 19, 1.3),   // [19] elevated x=1310
+  makeEnemy(1350,  4, 1.2),   // [4]  ground
+  makeEnemy(1770, 21, 1.5),   // [21] elevated x=1730
+  makeEnemy(1980, 22, 1.8),   // [22] elevated x=1940
+  makeEnemy(2140, 23, 1.4),   // [23] elevated x=2100
+  makeEnemy(2220,  7, 2.0),   // [7]  ground
+  makeEnemy(2480,  8, 1.3),   // [8]  ground x=2450
+  makeEnemy(2560, 24, 1.6),   // [24] elevated x=2510
+  makeEnemy(2760,  9, 1.4),   // [9]  ground x=2720
+  makeEnemy(2830, 25, 1.7),   // [25] elevated x=2790
+  makeEnemy(3040, 10, 1.5),   // [10] ground x=3010
+  makeEnemy(3090, 26, 1.3),   // [26] elevated x=3060
+  makeEnemy(3280, 11, 1.6),   // [11] ground x=3260
+  makeEnemy(3330, 27, 1.8),   // [27] elevated x=3310
+  makeEnemy(3580, 12, 1.4),   // [12] ground x=3550
+  makeEnemy(3650, 29, 1.9),   // [29] elevated x=3630
+  makeEnemy(3880, 13, 2.0),   // [13] ground x=3860
+  makeEnemy(3820, 30, 1.7),   // [30] elevated x=3790
+];
+
+// ── Particles ────────────────────────────────────────────────────────────────
+let particles = [];
+function burst(x, y, colors, count = 10) {
+  for (let i = 0; i < count; i++) {
+    const c = colors[Math.floor(Math.random() * colors.length)];
+    particles.push({
+      x, y,
+      vx: (Math.random() - 0.5) * 7,
+      vy: Math.random() * -5 - 1,
+      r: Math.random() * 4 + 2,
+      color: c,
+      life: 30 + Math.random() * 20,
+      maxLife: 50,
+    });
+  }
+}
+
+// ── Player ───────────────────────────────────────────────────────────────────
+function resetPlayer() {
+  return {
+    x: 80, y: 380,
+    w: 38, h: 58,
+    vx: 0, vy: 0,
+    onGround: false,
+    facing: 1,
+    swinging: false,
+    swingFrame: 0,
+    hp: 5,
+    invincible: 0,
+    score: 0,
+    walkCycle: 0,
+  };
+}
+let player = resetPlayer();
+
+// ── Camera ───────────────────────────────────────────────────────────────────
+let camX = 0;
+
+// ── AABB helpers ─────────────────────────────────────────────────────────────
+function overlaps(a, b) {
+  return a.x < b.x + b.w && a.x + a.w > b.x
+      && a.y < b.y + b.h && a.y + a.h > b.y;
+}
+function landedOn(entity, plat) {
+  return entity.vy >= 0
+      && entity.x + entity.w > plat.x
+      && entity.x < plat.x + plat.w
+      && entity.y + entity.h <= plat.y + 10
+      && entity.y + entity.h + entity.vy >= plat.y;
+}
+
+// ── Bat hitbox ───────────────────────────────────────────────────────────────
+function batHitbox() {
+  const reach = 54, h = 18;
+  if (player.facing === 1)
+    return { x: player.x + player.w, y: player.y + 14, w: reach, h };
+  else
+    return { x: player.x - reach,    y: player.y + 14, w: reach, h };
+}
+
+// ── Game state ───────────────────────────────────────────────────────────────
+let gameOver = false;
+let won = false;
+
+function resetGame() {
+  player = resetPlayer();
+  camX = 0;
+  particles = [];
+  gameOver = false;
+  won = false;
+  enemies = [
+    makeEnemy( 320,  0, 1.2),
+    makeEnemy( 550,  1, 1.5),
+    makeEnemy( 780,  2, 1.0),
+    makeEnemy( 720, 16, 1.2),
+    makeEnemy( 920, 17, 1.4),
+    makeEnemy(1100, 18, 1.0),
+    makeEnemy(1050,  3, 1.6),
+    makeEnemy(1340, 19, 1.3),
+    makeEnemy(1350,  4, 1.2),
+    makeEnemy(1770, 21, 1.5),
+    makeEnemy(1980, 22, 1.8),
+    makeEnemy(2140, 23, 1.4),
+    makeEnemy(2220,  7, 2.0),
+    makeEnemy(2480,  8, 1.3),
+    makeEnemy(2560, 24, 1.6),
+    makeEnemy(2760,  9, 1.4),
+    makeEnemy(2830, 25, 1.7),
+    makeEnemy(3040, 10, 1.5),
+    makeEnemy(3090, 26, 1.3),
+    makeEnemy(3280, 11, 1.6),
+    makeEnemy(3330, 27, 1.8),
+    makeEnemy(3580, 12, 1.4),
+    makeEnemy(3650, 29, 1.9),
+    makeEnemy(3880, 13, 2.0),
+    makeEnemy(3820, 30, 1.7),
+  ];
+}
+
+// ── Update ───────────────────────────────────────────────────────────────────
+function update() {
+  if (gameOver || won) {
+    if (keys['KeyR']) resetGame();
+    return;
+  }
+
+  // Horizontal
+  if (keys['KeyA'])  { player.vx = -WALK_SPD; player.facing = -1; }
+  else if (keys['KeyD']) { player.vx =  WALK_SPD; player.facing =  1; }
+  else player.vx *= 0.65;
+
+  if (Math.abs(player.vx) > 0.2 && player.onGround)
+    player.walkCycle += 0.25;
+
+  // Jump
+  if (keys['KeyS'] && player.onGround) {
+    player.vy = JUMP_VEL;
+    player.onGround = false;
+    burst(player.x + player.w / 2, player.y + player.h, ['#C8A050','#8B6914'], 5);
+  }
+
+  // Swing
+  if (keys['KeyF'] && !player.swinging) {
+    player.swinging = true;
+    player.swingFrame = 0;
+  }
+  if (player.swinging) {
+    player.swingFrame++;
+    if (player.swingFrame >= SWING_DUR) player.swinging = false;
+
+    // Hitbox active window
+    if (player.swingFrame >= SWING_HIT_START && player.swingFrame <= SWING_HIT_END) {
+      const bat = batHitbox();
+      for (const e of enemies) {
+        if (!e.alive || e.hitFlash > 10) continue;
+        if (overlaps(bat, e)) {
+          e.hp--;
+          e.hitFlash = 20;
+          burst(e.x + e.w / 2, e.y + e.h / 2, ['#FF5500','#FFD700','#FF8800'], 8);
+          if (e.hp <= 0) {
+            e.alive = false;
+            burst(e.x + e.w / 2, e.y, ['#FFD700','#FFE86A','#FF8800'], 14);
+          }
+        }
+      }
+    }
+  }
+
+  // Gravity + movement
+  player.vy += GRAVITY;
+  player.x += player.vx;
+  player.y += player.vy;
+
+  // Platform landing
+  player.onGround = false;
+  for (const p of platforms) {
+    if (landedOn(player, p)) {
+      player.y = p.y - player.h;
+      player.vy = 0;
+      player.onGround = true;
+    }
+  }
+
+  // World bounds
+  if (player.x < 0) player.x = 0;
+
+  // Fell off screen
+  if (player.y > H + 80) {
+    player.hp--;
+    player.x = Math.max(0, camX + 60);
+    player.y = 200;
+    player.vy = 0;
+    player.invincible = 90;
+    if (player.hp <= 0) gameOver = true;
+  }
+
+  // Enemy player damage
+  if (player.invincible <= 0) {
+    for (const e of enemies) {
+      if (!e.alive) continue;
+      if (overlaps(player, e)) {
+        player.hp--;
+        player.invincible = 80;
+        player.vy = -9;
+        player.vx = player.facing * -5;
+        burst(player.x + player.w / 2, player.y, ['#FF3300','#FF9900'], 8);
+        if (player.hp <= 0) { gameOver = true; break; }
+      }
+    }
+  }
+  if (player.invincible > 0) player.invincible--;
+
+  // Enemy AI: patrol platform edges
+  for (const e of enemies) {
+    if (!e.alive) continue;
+    if (e.hitFlash > 0) e.hitFlash--;
+
+    const plat = platforms[e.platRef];
+    e.x += e.vx * e.dir;
+
+    // Reverse at platform edges
+    if (e.x <= plat.x) { e.x = plat.x; e.dir = 1; }
+    if (e.x + e.w >= plat.x + plat.w) { e.x = plat.x + plat.w - e.w; e.dir = -1; }
+  }
+
+  // Particles
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx;
+    p.y += p.vy;
+    p.vy += 0.25;
+    p.life--;
+    if (p.life <= 0) particles.splice(i, 1);
+  }
+
+  // Camera follows player with lead
+  const targetCamX = player.x - W * 0.35;
+  camX += (targetCamX - camX) * 0.1;
+  camX = Math.max(0, camX);
+
+  // Win condition
+  if (enemies.every(e => !e.alive)) won = true;
+}
+
+// ── Draw helpers ─────────────────────────────────────────────────────────────
+function sx(worldX) { return worldX - camX; }
+
+// Background sky + parallax
+function drawBG() {
+  // Sky gradient
+  const sky = ctx.createLinearGradient(0, 0, 0, H);
+  sky.addColorStop(0, '#5AAAE0');
+  sky.addColorStop(0.7, '#D4EAF7');
+  sky.addColorStop(1, '#E8D59A');
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, W, H);
+
+  // Sun
+  ctx.fillStyle = '#FFE040';
+  ctx.beginPath();
+  ctx.arc(W - 120, 70, 45, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = 'rgba(255,224,64,0.3)';
+  ctx.beginPath();
+  ctx.arc(W - 120, 70, 62, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Parallax mountains
+  const mOffset = camX * 0.25;
+  ctx.fillStyle = '#9C7A6A';
+  for (let i = -1; i < 8; i++) {
+    const mx = i * 320 - mOffset % 320;
+    ctx.beginPath();
+    ctx.moveTo(mx, H - 60);
+    ctx.lineTo(mx + 120, H - 240);
+    ctx.lineTo(mx + 240, H - 60);
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.fillStyle = '#B8957A';
+  for (let i = -1; i < 10; i++) {
+    const mx = i * 220 - (mOffset * 0.6) % 220;
+    ctx.beginPath();
+    ctx.moveTo(mx, H - 60);
+    ctx.lineTo(mx + 80, H - 170);
+    ctx.lineTo(mx + 160, H - 60);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // Clouds
+  const cOffset = camX * 0.12;
+  ctx.fillStyle = 'rgba(255,255,255,0.85)';
+  const clouds = [[0,70,55],[180,50,40],[400,85,50],[600,55,45],[800,75,60],[1000,60,42]];
+  for (const [bx, by, r] of clouds) {
+    const cx2 = ((bx - cOffset % (W + 200) + W + 200)) % (W + 200) - 100;
+    ctx.beginPath();
+    ctx.arc(cx2,      by,     r,      0, Math.PI * 2);
+    ctx.arc(cx2 + r,  by - 8, r * 0.8, 0, Math.PI * 2);
+    ctx.arc(cx2 + r * 1.8, by, r * 0.7, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+// Platforms (dirt + grass top)
+function drawPlatforms() {
+  for (const p of platforms) {
+    const px = sx(p.x);
+    if (px + p.w < -10 || px > W + 10) continue;
+    // Dirt body
+    ctx.fillStyle = '#8B5E3C';
+    ctx.fillRect(px, p.y, p.w, p.h);
+    // Grass top
+    ctx.fillStyle = '#4CAF50';
+    ctx.fillRect(px, p.y, p.w, 7);
+    // Grass tufts
+    ctx.fillStyle = '#388E3C';
+    for (let gx = px + 8; gx < px + p.w - 8; gx += 14) {
+      ctx.fillRect(gx,     p.y - 4, 3, 5);
+      ctx.fillRect(gx + 4, p.y - 3, 3, 4);
+    }
+    // Dirt texture
+    ctx.fillStyle = '#7A5030';
+    for (let dx = px + 10; dx < px + p.w - 5; dx += 18) {
+      ctx.fillRect(dx, p.y + 10, 5, 3);
+    }
+  }
+}
+
+// Caveman player
+function drawPlayer() {
+  if (player.invincible > 0 && Math.floor(player.invincible / 5) % 2 === 1) return;
+
+  const px = sx(player.x) + player.w / 2;
+  const py = player.y + player.h / 2;
+  const f  = player.facing;
+
+  ctx.save();
+  ctx.translate(px, py);
+  if (f === -1) ctx.scale(-1, 1);
+  ctx.scale(0.6, 0.6);
+
+  // Leg walk animation
+  const legSwing = Math.sin(player.walkCycle) * (player.onGround ? 12 : 0);
+
+  // Back leg
+  ctx.fillStyle = '#C07840';
+  ctx.save();
+  ctx.translate(-6, 18);
+  ctx.rotate((-legSwing * Math.PI) / 180);
+  ctx.fillRect(-5, 0, 10, 22);
+  ctx.fillStyle = '#7A4020';
+  ctx.fillRect(-6, 20, 12, 7); // foot
+  ctx.restore();
+
+  // Front leg
+  ctx.fillStyle = '#C68642';
+  ctx.save();
+  ctx.translate(6, 18);
+  ctx.rotate((legSwing * Math.PI) / 180);
+  ctx.fillRect(-5, 0, 10, 22);
+  ctx.fillStyle = '#7A4020';
+  ctx.fillRect(-6, 20, 12, 7); // foot
+  ctx.restore();
+
+  // Torso
+  ctx.fillStyle = '#C68642';
+  ctx.fillRect(-14, -12, 28, 30);
+
+  // Loincloth
+  ctx.fillStyle = '#5C3010';
+  ctx.fillRect(-14, 10, 28, 15);
+  // spots
+  ctx.fillStyle = '#7A4818';
+  ctx.fillRect(-9, 13, 7, 5);
+  ctx.fillRect(4, 13, 7, 5);
+
+  // Non-bat arm (left): hangs or raises
+  ctx.fillStyle = '#C68642';
+  ctx.save();
+  ctx.translate(-16, -8);
+  ctx.rotate(player.swinging ? 0.4 : 0.1);
+  ctx.fillRect(-8, 0, 9, 20);
+  ctx.restore();
+
+  // Bat arm (right): swing animation
+  ctx.fillStyle = '#C68642';
+  ctx.save();
+  ctx.translate(16, -8);
+
+  // Compute swing angle: resting above head → sweep downward
+  let batAngle;
+  if (player.swinging) {
+    const t = player.swingFrame / SWING_DUR;
+    // Swing arc: starts at -2.2 rad (raised) sweeps to 0.8 rad (follow-through)
+    batAngle = -2.2 + t * 3.0;
+  } else {
+    batAngle = -0.5; // resting: bat tilted back
+  }
+  ctx.rotate(batAngle);
+
+  // Upper arm
+  ctx.fillRect(-5, 0, 9, 18);
+
+  // Bat
+  ctx.save();
+  ctx.translate(0, 18);
+  // Handle (thin)
+  ctx.fillStyle = '#8B6914';
+  ctx.fillRect(-3, 0, 6, 28);
+  // Grip wrap
+  ctx.fillStyle = '#6B4A08';
+  for (let gy = 4; gy < 26; gy += 7) {
+    ctx.fillRect(-4, gy, 8, 3);
+  }
+  // Barrel (thick end)
+  ctx.fillStyle = '#A06030';
+  ctx.fillRect(-9, 28, 18, 26);
+  // Wood grain
+  ctx.strokeStyle = '#804820';
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(-7, 32); ctx.lineTo(7, 32); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(-7, 38); ctx.lineTo(7, 38); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(-7, 44); ctx.lineTo(7, 44); ctx.stroke();
+  // Knob
+  ctx.fillStyle = '#8B5020';
+  ctx.fillRect(-6, 54, 12, 5);
+  ctx.restore();
+
+  ctx.restore(); // bat arm
+
+  // Head
+  ctx.fillStyle = '#C68642';
+  ctx.beginPath();
+  ctx.arc(0, -28, 17, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Brow ridge
+  ctx.fillStyle = '#A05828';
+  ctx.fillRect(-14, -40, 28, 7);
+
+  // Messy hair
+  ctx.fillStyle = '#1A0A00';
+  ctx.beginPath();
+  ctx.arc(0, -38, 14, Math.PI, 0);
+  ctx.fill();
+  // Hair spikes
+  ctx.fillRect(-14, -44, 6, 12);
+  ctx.fillRect(-5,  -48, 5, 14);
+  ctx.fillRect(5,   -46, 6, 13);
+  ctx.fillRect(11,  -42, 5, 10);
+
+  // Eyes (slightly angry)
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(-9, -35, 7, 6);
+  ctx.fillRect(3,  -35, 7, 6);
+  ctx.fillStyle = '#2a1a00';
+  ctx.fillRect(-8, -34, 4, 4);
+  ctx.fillRect(4,  -34, 4, 4);
+  // Angry brows
+  ctx.fillStyle = '#1A0A00';
+  ctx.save();
+  ctx.translate(-6, -37); ctx.rotate(0.25);
+  ctx.fillRect(-5, 0, 10, 3);
+  ctx.restore();
+  ctx.save();
+  ctx.translate(6, -37); ctx.rotate(-0.25);
+  ctx.fillRect(-5, 0, 10, 3);
+  ctx.restore();
+
+  // Nose
+  ctx.fillStyle = '#A05020';
+  ctx.beginPath();
+  ctx.arc(0, -26, 4, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#1A0A00';
+  ctx.fillRect(-3, -26, 2, 2);
+  ctx.fillRect(1,  -26, 2, 2);
+
+  // Beard stubble
+  ctx.fillStyle = '#1A0A00';
+  for (let bx = -8; bx <= 8; bx += 5) {
+    ctx.fillRect(bx, -18, 2, 3);
+  }
+
+  // WHACK flash on active swing
+  if (player.swinging && player.swingFrame >= SWING_HIT_START && player.swingFrame <= SWING_HIT_END) {
+    ctx.fillStyle = 'rgba(255,200,0,0.18)';
+    ctx.beginPath();
+    ctx.arc(30, 30, 38, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.restore();
+}
+
+// Enemy (lizard/velociraptor vibe)
+function drawEnemy(e) {
+  const px = sx(e.x) + e.w / 2;
+  const py = e.y + e.h / 2;
+
+  ctx.save();
+  ctx.translate(px, py);
+  if (e.dir < 0) ctx.scale(-1, 1);
+  ctx.scale(0.65, 0.65);
+
+  if (e.hitFlash > 0) {
+    ctx.globalAlpha = 0.5 + 0.5 * (e.hitFlash / 20);
+    ctx.filter = 'brightness(3) saturate(0)';
+  }
+
+  // Tail
+  ctx.strokeStyle = '#3A6E30';
+  ctx.lineWidth = 9;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(-8, 4);
+  ctx.quadraticCurveTo(-32, 10, -26, -8);
+  ctx.stroke();
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  ctx.moveTo(-26, -8);
+  ctx.quadraticCurveTo(-38, -14, -34, -4);
+  ctx.stroke();
+
+  // Body
+  ctx.fillStyle = '#4A8C3A';
+  ctx.beginPath();
+  ctx.ellipse(0, 4, 18, 14, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Belly
+  ctx.fillStyle = '#8BC870';
+  ctx.beginPath();
+  ctx.ellipse(4, 6, 10, 8, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Legs
+  ctx.fillStyle = '#3A6E30';
+  // back leg
+  ctx.fillRect(-10, 14, 8, 12);
+  ctx.fillRect(-12, 24, 12, 5);
+  // front leg
+  ctx.fillRect(4, 14, 8, 12);
+  ctx.fillRect(2,  24, 12, 5);
+
+  // Arms (tiny)
+  ctx.fillRect(14,  0, 7, 8);
+  ctx.fillRect(-18, 0, 7, 8);
+
+  // Head
+  ctx.fillStyle = '#4A8C3A';
+  ctx.beginPath();
+  ctx.arc(16, -6, 12, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Snout
+  ctx.fillRect(22, -8, 14, 8);
+
+  // Eye
+  ctx.fillStyle = '#FFE000';
+  ctx.beginPath();
+  ctx.arc(18, -12, 4, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#000';
+  ctx.beginPath();
+  ctx.arc(19, -12, 2.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,0.6)';
+  ctx.fillRect(18, -14, 2, 2);
+
+  // Teeth
+  ctx.fillStyle = '#F0F0D0';
+  ctx.fillRect(24, -3, 3, 6);
+  ctx.fillRect(29, -3, 3, 5);
+  ctx.fillRect(33, -3, 3, 4);
+
+  // Spines on back
+  ctx.fillStyle = '#2A5020';
+  for (let sp = -6; sp <= 6; sp += 4) {
+    ctx.beginPath();
+    ctx.moveTo(sp - 2, -8);
+    ctx.lineTo(sp, -18);
+    ctx.lineTo(sp + 2, -8);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  ctx.filter = 'none';
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
+// HUD
+function drawHUD() {
+  // Panel — three rows: HEALTH label, hearts, score
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.beginPath();
+  ctx.roundRect(10, 10, 220, 116, 8);
+  ctx.fill();
+
+  ctx.textAlign = 'left';
+
+  // Row 1: HEALTH label
+  ctx.font = 'bold 40px monospace';
+  ctx.fillStyle = '#FFD700';
+  ctx.fillText('HEALTH', 22, 56);
+
+  // Row 2: hearts
+  for (let i = 0; i < 5; i++) {
+    ctx.fillStyle = i < player.hp ? '#FF3030' : '#444';
+    ctx.font = '40px sans-serif';
+    ctx.fillText('♥', 22 + i * 38, 104);
+  }
+
+  // WHACK text
+  if (player.swinging && player.swingFrame >= SWING_HIT_START && player.swingFrame <= SWING_HIT_END) {
+    const alpha = 1 - (player.swingFrame - SWING_HIT_START) / (SWING_HIT_END - SWING_HIT_START);
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.font = 'bold 80px monospace';
+    ctx.fillStyle = '#FFE000';
+    ctx.textAlign = 'center';
+    ctx.shadowColor = '#FF6600';
+    ctx.shadowBlur = 3;
+    ctx.fillText('WHACK!', W / 2, 160);
+    ctx.restore();
+  }
+}
+
+// Game over / win overlays
+function drawOverlay() {
+  if (!gameOver && !won) return;
+  ctx.fillStyle = 'rgba(0,0,0,0.72)';
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.textAlign = 'center';
+  if (won) {
+    ctx.fillStyle = '#FFD700';
+    ctx.font = 'bold 80px monospace';
+    ctx.fillText('YOU WIN!', W / 2, H / 2);
+  } else {
+    ctx.fillStyle = '#FF3030';
+    ctx.font = 'bold 80px monospace';
+    ctx.fillText('GAME OVER', W / 2, H / 2);
+  }
+  ctx.font = 'bold 44px monospace';
+  ctx.fillStyle = '#C8A862';
+  ctx.fillText('Press R to play again', W / 2, H / 2 + 110);
+}
+
+// Particles
+function drawParticles() {
+  for (const p of particles) {
+    ctx.globalAlpha = p.life / p.maxLife;
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(sx(p.x), p.y, p.r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+// ── Game loop ─────────────────────────────────────────────────────────────────
+function loop() {
+  update();
+
+  ctx.clearRect(0, 0, W, H);
+  drawBG();
+  drawPlatforms();
+  drawParticles();
+
+  for (const e of enemies) {
+    if (e.alive) drawEnemy(e);
+  }
+  drawPlayer();
+  drawHUD();
+  drawOverlay();
+
+  // Blit low-res offscreen to display canvas (nearest-neighbour = chunky pixels)
+  dispCtx.clearRect(0, 0, W, H);
+  dispCtx.drawImage(off, 0, 0, W, H);
+
+  requestAnimationFrame(loop);
+}
+
+loop();
+</script>
+</body>
+</html>
