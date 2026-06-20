@@ -12,9 +12,17 @@ const ctx = off.getContext('2d');
 ctx.imageSmoothingEnabled = false;
 ctx.scale(1 / PSCALE, 1 / PSCALE);
 
+// ── Levels ───────────────────────────────────────────────────────────────────
+const LEVELS = [LEVEL1, LEVEL2];
+let currentLevelIdx = 0;
+let currentLevel    = LEVELS[0];
+
 // ── Save / Load ──────────────────────────────────────────────────────────────
 const SAVE_KEY = 'prehistoricPeril_save';
-function saveGame()  { localStorage.setItem(SAVE_KEY, JSON.stringify({ level: 1 })); }
+function saveGame()  {
+  const next = Math.min(currentLevelIdx + 2, LEVELS.length);
+  localStorage.setItem(SAVE_KEY, JSON.stringify({ level: next }));
+}
 function hasSave()   { return !!localStorage.getItem(SAVE_KEY); }
 
 // ── Title screen ─────────────────────────────────────────────────────────────
@@ -48,6 +56,9 @@ canvas.addEventListener('click', e => {
     stopMusic();
     startCutsceneMusic();
   } else if (ptInBtn(mx, my, btnLoad) && hasSave()) {
+    const save = JSON.parse(localStorage.getItem(SAVE_KEY) || '{"level":1}');
+    currentLevelIdx = Math.min((save.level || 1) - 1, LEVELS.length - 1);
+    currentLevel = LEVELS[currentLevelIdx];
     titleScreen = false;
     resetGame();
   }
@@ -509,7 +520,8 @@ function batHitbox() {
 // ── Game state ───────────────────────────────────────────────────────────────
 let gameOver = false;
 let won      = false;
-let enemies  = createEnemies();
+let wonTimer = 0;
+let enemies  = currentLevel.createEnemies();
 
 // ── Cutscene state ───────────────────────────────────────────────────────────
 let cutscene     = false;
@@ -524,7 +536,8 @@ function resetGame() {
   particles = [];
   gameOver = false;
   won = false;
-  enemies = createEnemies();
+  wonTimer = 0;
+  enemies = currentLevel.createEnemies();
   stopCutsceneMusic();
   stopVictoryMusic();
   startMusic();
@@ -534,6 +547,22 @@ function resetGame() {
 function update(dt = 1) {
   if (paused) return;
   if (gameOver || won) {
+    if (won) {
+      wonTimer += dt;
+      if (wonTimer > 240 && currentLevelIdx < LEVELS.length - 1) {
+        currentLevelIdx++;
+        currentLevel = LEVELS[currentLevelIdx];
+        resetGame();
+        return;
+      }
+      if (wonTimer > 240) {
+        // last level complete — return to title
+        titleScreen = true;
+        stopVictoryMusic();
+        startMusic();
+        return;
+      }
+    }
     if (keys['KeyR']) resetGame();
     return;
   }
@@ -588,7 +617,7 @@ function update(dt = 1) {
 
   // Platform landing
   player.onGround = false;
-  for (const p of platforms) {
+  for (const p of currentLevel.platforms) {
     if (landedOn(player, p, dt)) {
       player.y = p.y - player.h;
       player.vy = 0;
@@ -626,12 +655,12 @@ function update(dt = 1) {
     if (!e.alive) continue;
     if (e.hitFlash > 0) e.hitFlash -= dt;
 
-    const plat = platforms[e.platRef];
+    const plat = currentLevel.platforms[e.platRef];
     e.x += e.vx * e.dir * dt;
 
-    // Reverse at platform edges
-    if (e.x <= plat.x) { e.x = plat.x; e.dir = 1; }
-    if (e.x + e.w >= plat.x + plat.w) { e.x = plat.x + plat.w - e.w; e.dir = -1; }
+    // Reverse at patrol bounds
+    if (e.x <= e.patrolLeft)  { e.x = e.patrolLeft;  e.dir = 1; }
+    if (e.x + e.w >= e.patrolRight) { e.x = e.patrolRight - e.w; e.dir = -1; }
   }
 
   // Particles
@@ -650,14 +679,14 @@ function update(dt = 1) {
   camX = Math.max(0, camX);
 
   // Win condition: walk into the cave
-  if (overlaps(player, cave)) { won = true; saveGame(); stopMusic(); startVictoryMusic(); }
+  if (overlaps(player, currentLevel.cave)) { won = true; saveGame(); stopMusic(); startVictoryMusic(); }
 }
 
 // ── Draw helpers ─────────────────────────────────────────────────────────────
 function sx(worldX) { return worldX - camX; }
 
 function drawCave() {
-  const cx = sx(4020);
+  const cx = sx(currentLevel.cave.x - 40);
   const groundY = 460;
 
   // Rocky cliff body
@@ -799,27 +828,156 @@ function drawBG() {
   }
 }
 
-// Platforms (dirt + grass top)
+function drawBG2() {
+  // Sky — filtered light through canopy
+  const sky = ctx.createLinearGradient(0, 0, 0, H);
+  sky.addColorStop(0,   '#0B1F05');
+  sky.addColorStop(0.35,'#1A3A0A');
+  sky.addColorStop(0.7, '#2E5C12');
+  sky.addColorStop(1,   '#3A6A14');
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, W, H);
+
+  // Dappled light shafts through the canopy
+  const shaftOff = camX * 0.05;
+  ctx.save();
+  const shafts = [80, 250, 430, 650, 820, 1020];
+  for (const bx of shafts) {
+    const sx2 = ((bx - shaftOff % (W + 300) + W + 300)) % (W + 300) - 150;
+    const g = ctx.createLinearGradient(sx2, 0, sx2 + 40, H * 0.85);
+    g.addColorStop(0,   'rgba(180,255,80,0.07)');
+    g.addColorStop(0.5, 'rgba(180,255,80,0.04)');
+    g.addColorStop(1,   'rgba(180,255,80,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.moveTo(sx2, 0);
+    ctx.lineTo(sx2 + 50, 0);
+    ctx.lineTo(sx2 + 90, H * 0.85);
+    ctx.lineTo(sx2 + 40, H * 0.85);
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.restore();
+
+  // Far background trees (darkest, slowest parallax)
+  const p1off = camX * 0.08;
+  ctx.fillStyle = '#0D200A';
+  for (let i = -1; i < 9; i++) {
+    const tx = i * 290 - p1off % 290;
+    const th = 220 + Math.sin(i * 2.3) * 40;
+    // round canopy blob
+    ctx.beginPath();
+    ctx.arc(tx + 80, H - th, 75 + Math.sin(i * 1.1) * 15, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(tx + 130, H - th - 15, 60, 0, Math.PI * 2);
+    ctx.fill();
+    // trunk
+    ctx.fillRect(tx + 70, H - th + 50, 20, th - 50);
+  }
+
+  // Mid-distance trees (medium green, faster parallax)
+  const p2off = camX * 0.18;
+  ctx.fillStyle = '#163B0C';
+  for (let i = -1; i < 10; i++) {
+    const tx = i * 220 - p2off % 220;
+    const th = 160 + Math.sin(i * 3.1) * 30;
+    ctx.beginPath();
+    ctx.arc(tx + 60, H - th, 55 + Math.sin(i * 0.9) * 12, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(tx + 95, H - th - 10, 42, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillRect(tx + 52, H - th + 38, 16, th - 38);
+  }
+
+  // Hanging vines
+  const vineOff = camX * 0.22;
+  ctx.strokeStyle = '#1A4A0A';
+  ctx.lineWidth = 3;
+  const vines = [60, 190, 340, 500, 660, 800, 970, 1120];
+  for (const bx of vines) {
+    const vx = ((bx - vineOff % (W + 200) + W + 200)) % (W + 200) - 100;
+    const vlen = 80 + Math.sin(bx * 0.7) * 40;
+    ctx.beginPath();
+    ctx.moveTo(vx, 0);
+    ctx.bezierCurveTo(vx - 12, vlen * 0.4, vx + 14, vlen * 0.7, vx, vlen);
+    ctx.stroke();
+    // small leaf
+    ctx.fillStyle = '#1E5C10';
+    ctx.beginPath();
+    ctx.ellipse(vx, vlen, 9, 5, -0.4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Near foreground foliage (darkest green, fastest parallax)
+  const p3off = camX * 0.32;
+  ctx.fillStyle = '#0E280A';
+  for (let i = -1; i < 11; i++) {
+    const tx = i * 185 - p3off % 185;
+    // bush cluster at ground
+    ctx.beginPath();
+    ctx.arc(tx + 30, H - 55, 45, Math.PI, 0);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(tx + 80, H - 50, 38, Math.PI, 0);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(tx + 120, H - 52, 42, Math.PI, 0);
+    ctx.fill();
+  }
+
+  // Ground strip — dark jungle floor with moss tinge
+  ctx.fillStyle = '#1A3A08';
+  ctx.fillRect(0, H - 60, W, 60);
+  ctx.fillStyle = '#2A5A10';
+  ctx.fillRect(0, H - 60, W, 6);
+}
+
+// Platforms (dirt + grass, or wood planks for level 2 elevated)
 function drawPlatforms() {
-  for (const p of platforms) {
+  for (const p of currentLevel.platforms) {
     const px = sx(p.x);
     if (px + p.w < -10 || px > W + 10) continue;
-    // Dirt body
-    ctx.fillStyle = '#8B5E3C';
-    ctx.fillRect(px, p.y, p.w, p.h);
-    // Grass top
-    ctx.fillStyle = '#4CAF50';
-    ctx.fillRect(px, p.y, p.w, 7);
-    // Grass tufts
-    ctx.fillStyle = '#388E3C';
-    for (let gx = px + 8; gx < px + p.w - 8; gx += 14) {
-      ctx.fillRect(gx,     p.y - 4, 3, 5);
-      ctx.fillRect(gx + 4, p.y - 3, 3, 4);
-    }
-    // Dirt texture
-    ctx.fillStyle = '#7A5030';
-    for (let dx = px + 10; dx < px + p.w - 5; dx += 18) {
-      ctx.fillRect(dx, p.y + 10, 5, 3);
+
+    if (currentLevelIdx === 1) {
+      // Wood plank body
+      ctx.fillStyle = '#7B4A12';
+      ctx.fillRect(px, p.y, p.w, p.h);
+      // Plank dividers
+      ctx.fillStyle = '#5A3208';
+      for (let lx = px + 35; lx < px + p.w - 5; lx += 40) {
+        ctx.fillRect(lx, p.y, 2, p.h);
+      }
+      // Top highlight
+      ctx.fillStyle = '#C07828';
+      ctx.fillRect(px, p.y, p.w, 4);
+      // Horizontal grain lines
+      ctx.fillStyle = '#9B5E18';
+      for (let gy = p.y + 6; gy < p.y + p.h - 2; gy += 4) {
+        ctx.fillRect(px + 3, gy, p.w - 6, 1);
+      }
+      // Bottom shadow
+      ctx.fillStyle = '#3A1E04';
+      ctx.fillRect(px, p.y + p.h - 2, p.w, 2);
+    } else {
+      // Dirt body
+      ctx.fillStyle = '#8B5E3C';
+      ctx.fillRect(px, p.y, p.w, p.h);
+      // Grass top
+      ctx.fillStyle = '#4CAF50';
+      ctx.fillRect(px, p.y, p.w, 7);
+      // Grass tufts
+      ctx.fillStyle = '#388E3C';
+      for (let gx = px + 8; gx < px + p.w - 8; gx += 14) {
+        ctx.fillRect(gx,     p.y - 4, 3, 5);
+        ctx.fillRect(gx + 4, p.y - 3, 3, 4);
+      }
+      // Dirt texture
+      ctx.fillStyle = '#7A5030';
+      for (let dx = px + 10; dx < px + p.w - 5; dx += 18) {
+        ctx.fillRect(dx, p.y + 10, 5, 3);
+      }
     }
   }
 }
@@ -1088,6 +1246,134 @@ function drawEnemy(e) {
   ctx.restore();
 }
 
+function drawLeopard(e) {
+  const px = sx(e.x) + e.w / 2;
+  const py = e.y + e.h / 2;
+
+  ctx.save();
+  ctx.translate(px, py);
+  if (e.dir < 0) ctx.scale(-1, 1);
+  ctx.scale(0.65, 0.65);
+
+  if (e.hitFlash > 0) {
+    ctx.globalAlpha = 0.5 + 0.5 * (e.hitFlash / 20);
+    ctx.filter = 'brightness(3) saturate(0)';
+  }
+
+  // Tail — long, curling upward
+  ctx.strokeStyle = '#B8820A';
+  ctx.lineWidth = 7;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(-14, 2);
+  ctx.bezierCurveTo(-30, 6, -38, -10, -28, -22);
+  ctx.stroke();
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.moveTo(-28, -22);
+  ctx.quadraticCurveTo(-22, -30, -16, -24);
+  ctx.stroke();
+
+  // Body — low and elongated
+  ctx.fillStyle = '#D4A020';
+  ctx.beginPath();
+  ctx.ellipse(0, 6, 22, 11, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Belly
+  ctx.fillStyle = '#F0D878';
+  ctx.beginPath();
+  ctx.ellipse(2, 9, 13, 7, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Spots — rosette pattern
+  ctx.fillStyle = '#5A2800';
+  for (const [sx2, sy2, r] of [[-10, 2, 4.5], [2, 0, 5], [13, 3, 4.5], [-4, 10, 4], [10, 10, 4.5]]) {
+    ctx.beginPath();
+    ctx.arc(sx2, sy2, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // rosette holes
+  ctx.fillStyle = '#D4A020';
+  for (const [sx2, sy2, r] of [[-10, 2, 2], [2, 0, 2.5], [13, 3, 2], [-4, 10, 2], [10, 10, 2]]) {
+    ctx.beginPath();
+    ctx.arc(sx2, sy2, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Four legs — short, thick
+  ctx.fillStyle = '#B88010';
+  ctx.fillRect(-16, 14, 7, 11);  // back-left
+  ctx.fillRect(-6,  14, 7, 11);  // back-right
+  ctx.fillRect( 6,  14, 7, 11);  // front-left
+  ctx.fillRect( 16, 14, 7, 11);  // front-right
+  // paws
+  ctx.fillStyle = '#F0D878';
+  ctx.fillRect(-17, 23, 9, 4);
+  ctx.fillRect( -7, 23, 9, 4);
+  ctx.fillRect(  5, 23, 9, 4);
+  ctx.fillRect( 15, 23, 9, 4);
+
+  // Head
+  ctx.fillStyle = '#D4A020';
+  ctx.beginPath();
+  ctx.arc(22, -2, 12, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Ears
+  ctx.fillStyle = '#B88010';
+  ctx.beginPath();
+  ctx.moveTo(15, -10); ctx.lineTo(18, -22); ctx.lineTo(23, -10); ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(24, -10); ctx.lineTo(27, -21); ctx.lineTo(31, -10); ctx.fill();
+
+  // Muzzle
+  ctx.fillStyle = '#F0D878';
+  ctx.beginPath();
+  ctx.ellipse(30, 2, 8, 6, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Nose
+  ctx.fillStyle = '#FF6060';
+  ctx.beginPath();
+  ctx.arc(36, 0, 2.5, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Eyes — green with slit pupil
+  ctx.fillStyle = '#40CC40';
+  ctx.beginPath();
+  ctx.arc(20, -6, 4, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#000';
+  ctx.fillRect(20, -10, 1.5, 8);
+  ctx.fillStyle = 'rgba(255,255,255,0.7)';
+  ctx.fillRect(17, -8, 1.5, 1.5);
+
+  // Whiskers
+  ctx.strokeStyle = '#F0F0D0';
+  ctx.lineWidth = 1.5;
+  for (const [x1, y1, x2, y2] of [[30,-2,44,-4],[30,-2,44,-1],[30,2,44,3]]) {
+    ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
+  }
+
+  // HP pip (second heart if hp=2)
+  if (e.maxHp > 1) {
+    ctx.filter = 'none';
+    ctx.fillStyle = e.hp >= 2 ? '#FF3030' : '#444';
+    ctx.beginPath();
+    ctx.arc(-4, -26, 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = e.hp >= 1 ? '#FF3030' : '#444';
+    ctx.beginPath();
+    ctx.arc(6, -26, 5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.filter = 'none';
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
 // HUD
 function drawHUD() {
   // Panel — three rows: HEALTH label, hearts, score
@@ -1147,7 +1433,14 @@ function drawOverlay() {
   if (won) {
     ctx.fillStyle = '#FFD700';
     ctx.font = 'bold 80px monospace';
-    ctx.fillText('Level Complete!', W / 2, H / 2);
+    if (currentLevelIdx < LEVELS.length - 1) {
+      ctx.fillText('Level ' + (currentLevelIdx + 1) + ' Complete!', W / 2, H / 2);
+      ctx.font = 'bold 44px monospace';
+      ctx.fillStyle = '#C8A862';
+      ctx.fillText('Press R to continue', W / 2, H / 2 + 110);
+      return;
+    }
+    ctx.fillText('YOU WIN!', W / 2, H / 2);
   } else {
     ctx.fillStyle = '#FF3030';
     ctx.font = 'bold 80px monospace';
@@ -1736,12 +2029,12 @@ function loop(timestamp) {
     else drawCutscene();
   } else {
     update(dt);
-    drawBG();
+    if (currentLevelIdx === 0) drawBG(); else drawBG2();
     drawPlatforms();
     drawCave();
     drawParticles();
     for (const e of enemies) {
-      if (e.alive) drawEnemy(e);
+      if (e.alive) { if (e.type === 'leopard') drawLeopard(e); else drawEnemy(e); }
     }
     drawPlayer();
     drawHUD();
