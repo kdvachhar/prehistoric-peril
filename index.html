@@ -344,12 +344,7 @@ function update(dt = 1) {
 
   // Fell off screen
   if (player.y > H + 80) {
-    player.hp--;
-    player.x = Math.max(0, camX + 60);
-    player.y = 200;
-    player.vy = 0;
-    player.invincible = 90;
-    if (player.hp <= 0) gameOver = true;
+    gameOver = true;
   }
 
   // Enemy player damage
