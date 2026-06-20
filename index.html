@@ -70,13 +70,15 @@ canvas.addEventListener('mousemove', e => {
              : ptInBtn(mx, my, btnLoad) ? 'load' : null;
 });
 canvas.addEventListener('click', e => {
+  if (cutscene) { cutscene = false; resetGame(); return; }
   if (!titleScreen) return;
   const r  = canvas.getBoundingClientRect();
   const mx = (e.clientX - r.left) * (W / r.width);
   const my = (e.clientY - r.top)  * (H / r.height);
   if (ptInBtn(mx, my, btnNew)) {
     titleScreen = false;
-    resetGame();
+    cutscene = true;
+    cutsceneTime = 0;
   } else if (ptInBtn(mx, my, btnLoad) && hasSave()) {
     titleScreen = false;
     resetGame();
@@ -87,6 +89,7 @@ canvas.addEventListener('click', e => {
 const keys = {};
 let paused = false;
 document.addEventListener('keydown', e => {
+  if (cutscene) { cutscene = false; resetGame(); return; }
   if (e.code === 'Space') { if (!titleScreen) paused = !paused; e.preventDefault(); return; }
   keys[e.code] = true;
   if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code))
@@ -217,12 +220,14 @@ function overlaps(a, b) {
   return a.x < b.x + b.w && a.x + a.w > b.x
       && a.y < b.y + b.h && a.y + a.h > b.y;
 }
-function landedOn(entity, plat) {
+function landedOn(entity, plat, dt = 1) {
+  const bottom = entity.y + entity.h;
+  const step   = entity.vy * dt;           // distance moved down this tick
   return entity.vy >= 0
       && entity.x + entity.w > plat.x
       && entity.x < plat.x + plat.w
-      && entity.y + entity.h <= plat.y + 10
-      && entity.y + entity.h + entity.vy >= plat.y;
+      && bottom >= plat.y - 2              // at or just above platform top
+      && bottom <= plat.y + step + 2;     // no further than one tick past
 }
 
 // ── Bat hitbox ───────────────────────────────────────────────────────────────
@@ -239,7 +244,14 @@ const cave = { x: 4060, y: 350, w: 60, h: 110 };
 
 // ── Game state ───────────────────────────────────────────────────────────────
 let gameOver = false;
-let won = false;
+let won      = false;
+
+// ── Cutscene state ───────────────────────────────────────────────────────────
+let cutscene     = false;
+let cutsceneTime = 0;
+const CS_ACT1 = 180;  // wife scene
+const CS_ACT2 = 360;  // attack scene
+const CS_ACT3 = 520;  // vengeance scene → fade to game
 
 function resetGame() {
   player = resetPlayer();
@@ -332,7 +344,7 @@ function update(dt = 1) {
   // Platform landing
   player.onGround = false;
   for (const p of platforms) {
-    if (landedOn(player, p)) {
+    if (landedOn(player, p, dt)) {
       player.y = p.y - player.h;
       player.vy = 0;
       player.onGround = true;
@@ -1103,6 +1115,341 @@ function drawTitleScreen() {
   ctx.fillText('LOAD GAME', W/2, btnLoad.y + 50);
 }
 
+// ── Cutscene draw ────────────────────────────────────────────────────────────
+function drawCutscene() {
+  const t = cutsceneTime;
+  function clamp01(v) { return Math.min(1, Math.max(0, v)); }
+
+  // Shared daytime background
+  const sky = ctx.createLinearGradient(0, 0, 0, H);
+  sky.addColorStop(0, '#5AAAE0');
+  sky.addColorStop(0.7, '#D4EAF7');
+  sky.addColorStop(1, '#8BC860');
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.fillStyle = '#FFE040';
+  ctx.beginPath(); ctx.arc(820, 70, 42, 0, Math.PI * 2); ctx.fill();
+
+  // Ground
+  ctx.fillStyle = '#4CAF50';
+  ctx.fillRect(0, H - 80, W, 80);
+  ctx.fillStyle = '#388E3C';
+  ctx.fillRect(0, H - 80, W, 10);
+
+  // Trees
+  for (const [tx] of [[90], [280], [560], [760]]) {
+    ctx.fillStyle = '#4a5e25';
+    ctx.fillRect(tx - 5, H - 110, 10, 32);
+    ctx.fillStyle = '#2E7D32';
+    ctx.beginPath(); ctx.arc(tx, H - 110, 28, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(tx + 16, H - 98, 20, 0, Math.PI * 2); ctx.fill();
+  }
+
+  // ── Helper: draw cavewoman ────────────────────────────────────────────────
+  function drawWife(x, y, scared, facingLeft = false) {
+    ctx.save();
+    ctx.translate(x, y);
+    if (facingLeft) ctx.scale(-1, 1);
+    ctx.scale(0.6, 0.6);
+
+    // Legs
+    ctx.fillStyle = '#C07840';
+    ctx.fillRect(-10, 18, 10, 28); ctx.fillRect(2, 18, 10, 28);
+    ctx.fillStyle = '#7A4020';
+    ctx.fillRect(-12, 43, 14, 7); ctx.fillRect(0, 43, 14, 7);
+
+    // Spotted dress
+    ctx.fillStyle = '#5C3010';
+    ctx.beginPath();
+    ctx.moveTo(-18, 10); ctx.lineTo(-26, 52); ctx.lineTo(26, 52); ctx.lineTo(18, 10);
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#8B5020';
+    ctx.fillRect(-12, 16, 7, 6); ctx.fillRect(5, 26, 7, 6); ctx.fillRect(-6, 38, 7, 5);
+
+    // Torso
+    ctx.fillStyle = '#C68642';
+    ctx.fillRect(-14, -12, 28, 24);
+
+    // Arms — raised in fear or relaxed
+    ctx.fillStyle = '#C68642';
+    if (scared) {
+      ctx.save(); ctx.translate(-16, -8); ctx.rotate(-1.1); ctx.fillRect(-5, -22, 9, 22); ctx.restore();
+      ctx.save(); ctx.translate(16, -8);  ctx.rotate(1.1);  ctx.fillRect(-4, -22, 9, 22); ctx.restore();
+    } else {
+      ctx.save(); ctx.translate(-16, -6); ctx.rotate(0.1); ctx.fillRect(-5, 0, 9, 20); ctx.restore();
+      ctx.save(); ctx.translate(16, -6);  ctx.rotate(-0.1); ctx.fillRect(-4, 0, 9, 20); ctx.restore();
+    }
+
+    // Head
+    ctx.fillStyle = '#C68642';
+    ctx.beginPath(); ctx.arc(0, -28, 17, 0, Math.PI * 2); ctx.fill();
+
+    // Long hair
+    ctx.fillStyle = '#1A0A00';
+    ctx.beginPath(); ctx.arc(0, -34, 15, Math.PI, 0); ctx.fill();
+    ctx.fillRect(-15, -36, 9, 44); ctx.fillRect(8, -36, 9, 38);
+
+    // Flower in hair
+    ctx.fillStyle = '#FF5080';
+    for (let a = 0; a < 5; a++) {
+      const ax = Math.cos(a * Math.PI * 2 / 5) * 5 - 10;
+      const ay = Math.sin(a * Math.PI * 2 / 5) * 5 - 46;
+      ctx.beginPath(); ctx.arc(ax, ay, 4, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.fillStyle = '#FFE000';
+    ctx.beginPath(); ctx.arc(-10, -46, 3, 0, Math.PI * 2); ctx.fill();
+
+    // Eyes
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(-9, -34, 7, 5); ctx.fillRect(3, -34, 7, 5);
+    if (scared) {
+      ctx.fillStyle = '#000';
+      ctx.beginPath(); ctx.arc(-5, -32, 3.5, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(7, -32, 3.5, 0, Math.PI * 2); ctx.fill();
+      // Scared mouth (open O)
+      ctx.beginPath(); ctx.arc(0, -21, 5, 0, Math.PI * 2); ctx.fill();
+    } else {
+      ctx.fillStyle = '#2a1a00';
+      ctx.fillRect(-8, -33, 5, 4); ctx.fillRect(4, -33, 5, 4);
+      // Smile
+      ctx.strokeStyle = '#5A2000'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(0, -20, 5, 0.2, Math.PI - 0.2); ctx.stroke();
+    }
+
+    ctx.restore();
+  }
+
+  // ── Helper: draw cutscene T-Rex (facing left, chomping) ──────────────────
+  function drawCSTRex(x, y, sc = 1, jawOpen = 0.5) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.scale(-sc * 0.45, sc * 0.45); // face left
+
+    // Tail
+    ctx.fillStyle = '#2a6818';
+    ctx.beginPath();
+    ctx.moveTo(80, 50); ctx.quadraticCurveTo(200, 30, 240, -30);
+    ctx.quadraticCurveTo(220, -15, 165, 20); ctx.quadraticCurveTo(110, 55, 90, 70);
+    ctx.closePath(); ctx.fill();
+
+    // Legs
+    ctx.fillStyle = '#2a6818';
+    ctx.fillRect(30, 110, 50, 90); ctx.fillRect(38, 192, 38, 55); ctx.fillRect(8, 240, 80, 18);
+    ctx.fillStyle = '#348a20';
+    ctx.fillRect(-30, 100, 48, 85); ctx.fillRect(-22, 178, 36, 52); ctx.fillRect(-50, 224, 78, 18);
+
+    // Body
+    ctx.fillStyle = '#348a20';
+    ctx.beginPath(); ctx.ellipse(0, 80, 95, 65, -0.1, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#80c858';
+    ctx.beginPath(); ctx.ellipse(22, 92, 55, 38, -0.05, 0, Math.PI * 2); ctx.fill();
+
+    // Spines
+    ctx.fillStyle = '#1a4e0e';
+    for (let i = 0; i < 5; i++) {
+      const spx = -38 + i * 22, spy = 18 - i * 9;
+      ctx.beginPath(); ctx.moveTo(spx-7, spy); ctx.lineTo(spx, spy-28); ctx.lineTo(spx+7, spy); ctx.closePath(); ctx.fill();
+    }
+
+    // Neck
+    ctx.fillStyle = '#348a20';
+    ctx.beginPath();
+    ctx.moveTo(-55, 28); ctx.lineTo(-150, -90); ctx.lineTo(-172, -68); ctx.lineTo(-78, 50);
+    ctx.closePath(); ctx.fill();
+
+    // Skull
+    ctx.fillStyle = '#348a20';
+    ctx.beginPath(); ctx.ellipse(-158, -108, 58, 44, 0.08, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#1a4e0e';
+    ctx.beginPath(); ctx.ellipse(-152, -150, 52, 15, 0.1, 0, Math.PI * 2); ctx.fill();
+
+    // Upper jaw / snout
+    ctx.fillStyle = '#348a20';
+    ctx.fillRect(-210, -132, 72, 46);
+    ctx.fillRect(-278, -134, 24, 100);
+
+    // Upper teeth
+    ctx.fillStyle = '#f0f0d0';
+    for (let i = 0; i < 5; i++) ctx.fillRect(-206 + i * 18, -92, 14, 16);
+
+    // Lower jaw (rotates open)
+    ctx.save();
+    ctx.translate(-158, -88);
+    ctx.rotate(jawOpen * 0.55);
+    ctx.fillStyle = '#2a6818';
+    ctx.fillRect(-52, 0, 130, 32);
+    ctx.fillStyle = '#f0f0d0';
+    for (let i = 0; i < 5; i++) ctx.fillRect(-44 + i * 18, 0, 14, 18);
+    ctx.restore();
+
+    // Eye
+    ctx.fillStyle = '#FFD700';
+    ctx.beginPath(); ctx.arc(-168, -124, 16, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#111';
+    ctx.beginPath(); ctx.arc(-166, -124, 10, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    ctx.fillRect(-172, -132, 7, 7);
+
+    // Tiny arm
+    ctx.fillStyle = '#348a20';
+    ctx.fillRect(-92, 18, 24, 38); ctx.fillRect(-90, 54, 32, 12);
+
+    ctx.restore();
+  }
+
+  // ── ACT 1: Peaceful wife scene ────────────────────────────────────────────
+  if (t <= CS_ACT1) {
+    const textAlpha = clamp01(t < 20 ? t / 20 : t > 100 ? (CS_ACT1 - t) / 20 : 1);
+
+    // Flowers near wife
+    for (const [fx, fy] of [[W*0.38-55, H-83],[W*0.38+50, H-86],[W*0.38+20, H-80]]) {
+      ctx.fillStyle = '#FF6090'; ctx.beginPath(); ctx.arc(fx, fy, 5, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = '#FFE000'; ctx.beginPath(); ctx.arc(fx, fy, 2, 0, Math.PI*2); ctx.fill();
+    }
+
+    drawWife(W * 0.38, H - 80, false);
+
+    ctx.save();
+    ctx.globalAlpha = textAlpha;
+    ctx.fillStyle = 'rgba(0,0,0,0.65)';
+    ctx.beginPath(); ctx.roundRect(W/2 - 310, 28, 620, 72, 8); ctx.fill();
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 40px monospace';
+    ctx.fillStyle = '#FFD700';
+    ctx.fillText('Your beloved wife, Mog...', W/2, 76);
+    ctx.restore();
+  }
+
+  // ── ACT 2: T-Rex attack ───────────────────────────────────────────────────
+  else if (t <= CS_ACT2) {
+    const lt = t - CS_ACT1;
+    const dur = CS_ACT2 - CS_ACT1;
+    const chomped = lt > dur * 0.72;
+
+    if (!chomped) {
+      const trexX  = W + 120 - (lt / (dur * 0.72)) * (W * 0.52);
+      const wifeX  = W * 0.38 - lt * 1.4;
+      drawWife(wifeX, H - 80, true, true);
+      drawCSTRex(trexX, H - 80, 1.2, 0.8);
+
+      ctx.fillStyle = 'rgba(0,0,0,0.65)';
+      ctx.beginPath(); ctx.roundRect(W/2 - 260, 28, 520, 72, 8); ctx.fill();
+      ctx.textAlign = 'center';
+      ctx.font = 'bold 40px monospace';
+      ctx.fillStyle = '#FF4400';
+      ctx.fillText('A T-Rex appears!', W/2, 76);
+    } else {
+      const ft = lt - dur * 0.72; // frames since chomp
+      // White flash
+      if (ft < 10) {
+        ctx.fillStyle = `rgba(255,255,255,${clamp01(1 - ft * 0.1)})`;
+        ctx.fillRect(0, 0, W, H);
+      }
+      drawCSTRex(W * 0.52, H - 80, 1.2, 0.6);
+
+      // Debris particles
+      for (let i = 0; i < 9; i++) {
+        const ang = (i / 9) * Math.PI * 2;
+        const d = Math.min(ft * 4, 80);
+        ctx.fillStyle = i % 2 === 0 ? '#C8A050' : '#FF6600';
+        ctx.beginPath();
+        ctx.arc(W*0.44 + Math.cos(ang)*d, H-90 + Math.sin(ang)*d*0.5, 5, 0, Math.PI*2);
+        ctx.fill();
+      }
+
+      const ta = clamp01((ft - 4) / 10);
+      ctx.save();
+      ctx.globalAlpha = ta;
+      ctx.fillStyle = 'rgba(0,0,0,0.7)';
+      ctx.beginPath(); ctx.roundRect(W/2 - 220, 28, 440, 72, 8); ctx.fill();
+      ctx.textAlign = 'center';
+      ctx.font = 'bold 48px monospace';
+      ctx.fillStyle = '#FF2200';
+      ctx.fillText('NOOOOO!!!', W/2, 78);
+      ctx.restore();
+    }
+  }
+
+  // ── ACT 3: Caveman vows vengeance ─────────────────────────────────────────
+  else {
+    const lt   = t - CS_ACT2;
+    const dur  = CS_ACT3 - CS_ACT2;
+
+    // T-Rex exits right
+    drawCSTRex(W * 0.52 + lt * 1.5, H - 80, 0.8, 0.2);
+
+    // Angry caveman storms in from left
+    const caveX = Math.min(W * 0.3, 30 + lt * 5);
+    ctx.save();
+    ctx.translate(caveX, H - 80);
+    ctx.scale(0.7, 0.7);
+    // Legs
+    ctx.fillStyle = '#C07840';
+    ctx.fillRect(-8, 18, 10, 28); ctx.fillRect(4, 18, 10, 28);
+    ctx.fillStyle = '#7A4020';
+    ctx.fillRect(-10, 43, 14, 7); ctx.fillRect(2, 43, 14, 7);
+    // Loincloth
+    ctx.fillStyle = '#5C3010'; ctx.fillRect(-14, 10, 28, 18);
+    ctx.fillStyle = '#7A4818'; ctx.fillRect(-9, 13, 7, 5); ctx.fillRect(4, 13, 7, 5);
+    // Torso
+    ctx.fillStyle = '#C68642'; ctx.fillRect(-14, -12, 28, 24);
+    // Fist raised in rage
+    ctx.fillStyle = '#C68642';
+    ctx.save(); ctx.translate(-16, -8); ctx.rotate(0.2); ctx.fillRect(-5, 0, 9, 20); ctx.restore();
+    ctx.save(); ctx.translate(16, -10); ctx.rotate(-1.6); ctx.fillRect(-5, -22, 9, 22); ctx.restore();
+    ctx.fillRect(8, -36, 18, 16); // fist
+    // Head
+    ctx.fillStyle = '#C68642'; ctx.beginPath(); ctx.arc(0, -30, 18, 0, Math.PI*2); ctx.fill();
+    // Brow
+    ctx.fillStyle = '#A05828'; ctx.fillRect(-14, -42, 28, 7);
+    // Hair
+    ctx.fillStyle = '#1A0A00';
+    ctx.beginPath(); ctx.arc(0, -38, 14, Math.PI, 0); ctx.fill();
+    ctx.fillRect(-14, -44, 6, 12); ctx.fillRect(-5, -48, 5, 14);
+    ctx.fillRect(5, -46, 6, 13); ctx.fillRect(11, -42, 5, 10);
+    // Angry eyes (wide)
+    ctx.fillStyle = '#fff'; ctx.fillRect(-9, -38, 7, 7); ctx.fillRect(3, -38, 7, 7);
+    ctx.fillStyle = '#000'; ctx.fillRect(-8, -37, 5, 5); ctx.fillRect(4, -37, 5, 5);
+    // Angry brows
+    ctx.fillStyle = '#1A0A00';
+    ctx.save(); ctx.translate(-6, -41); ctx.rotate(0.45); ctx.fillRect(-5,0,12,4); ctx.restore();
+    ctx.save(); ctx.translate(6, -41);  ctx.rotate(-0.45); ctx.fillRect(-7,0,12,4); ctx.restore();
+    // Roaring mouth
+    ctx.fillStyle = '#000';
+    ctx.beginPath(); ctx.arc(0, -23, 7, 0.1, Math.PI - 0.1); ctx.fill();
+    ctx.restore();
+
+    // Shaking vengeance text
+    const ta    = clamp01(lt / 20);
+    const shake = lt > 15 ? Math.sin(lt * 0.9) * 4 : 0;
+    ctx.save();
+    ctx.globalAlpha = ta;
+    ctx.fillStyle = 'rgba(0,0,0,0.72)';
+    ctx.beginPath(); ctx.roundRect(W/2 - 320 + shake, 18, 640, 110, 8); ctx.fill();
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 52px monospace';
+    ctx.fillStyle = '#FF3300';
+    ctx.fillText('VENGEANCE!!!', W/2 + shake, 64);
+    ctx.font = 'bold 28px monospace';
+    ctx.fillStyle = '#FFD700';
+    ctx.fillText('Your quest for revenge begins...', W/2 + shake * 0.5, 106);
+    ctx.restore();
+
+    // Fade to black
+    if (lt > dur - 50) {
+      ctx.fillStyle = `rgba(0,0,0,${clamp01((lt - (dur - 50)) / 50)})`;
+      ctx.fillRect(0, 0, W, H);
+    }
+  }
+
+  // Skip hint
+  ctx.textAlign = 'center';
+  ctx.font = '22px monospace';
+  ctx.fillStyle = 'rgba(200,168,98,0.55)';
+  ctx.fillText('Press any key to skip', W/2, H - 18);
+}
+
 // ── Game loop ─────────────────────────────────────────────────────────────────
 let lastTime = null;
 
@@ -1115,6 +1462,10 @@ function loop(timestamp) {
   ctx.clearRect(0, 0, W, H);
   if (titleScreen) {
     drawTitleScreen();
+  } else if (cutscene) {
+    cutsceneTime += dt;
+    if (cutsceneTime >= CS_ACT3) { cutscene = false; resetGame(); }
+    else drawCutscene();
   } else {
     update(dt);
     drawBG();
