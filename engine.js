@@ -35,6 +35,7 @@ canvas.addEventListener('mousemove', e => {
              : ptInBtn(mx, my, btnLoad) ? 'load' : null;
 });
 canvas.addEventListener('click', e => {
+  startMusic();
   if (cutscene) { cutscene = false; resetGame(); return; }
   if (!titleScreen) return;
   const r  = canvas.getBoundingClientRect();
@@ -44,18 +45,30 @@ canvas.addEventListener('click', e => {
     titleScreen = false;
     cutscene = true;
     cutsceneTime = 0;
+    stopMusic();
+    startCutsceneMusic();
   } else if (ptInBtn(mx, my, btnLoad) && hasSave()) {
     titleScreen = false;
     resetGame();
   }
 });
 
+// Start music on the first pointer press anywhere on the page
+document.addEventListener('pointerdown', startMusic, { once: true });
+
 // ── Input ───────────────────────────────────────────────────────────────────
 const keys = {};
 let paused = false;
 document.addEventListener('keydown', e => {
+  startMusic();
   if (cutscene) { cutscene = false; resetGame(); return; }
-  if (e.code === 'Space') { if (!titleScreen) paused = !paused; e.preventDefault(); return; }
+  if (e.code === 'Space') {
+    if (!titleScreen) {
+      paused = !paused;
+      if (audioCtx) { paused ? audioCtx.suspend() : audioCtx.resume(); }
+    }
+    e.preventDefault(); return;
+  }
   keys[e.code] = true;
   if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code))
     e.preventDefault();
@@ -202,6 +215,7 @@ function mBass(ac, freq, when) {
 
 function scheduleMusicStep() {
   const ac = getAudioCtx();
+  if (nextNoteTime < ac.currentTime) nextNoteTime = ac.currentTime + 0.05;
   while (nextNoteTime < ac.currentTime + 0.15) {
     const s16 = musicBeat % 16;
     const s32 = musicBeat % 32;
@@ -219,8 +233,215 @@ function scheduleMusicStep() {
 function startMusic() {
   if (musicScheduler) return;
   const ac = getAudioCtx();
+  getMusicGain(); // create gain node eagerly so gain can be set immediately
   nextNoteTime = ac.currentTime + 0.05;
   musicScheduler = setInterval(scheduleMusicStep, 50);
+}
+
+function stopMusic() {
+  clearInterval(musicScheduler);
+  musicScheduler = null;
+}
+
+// ── Cutscene music ────────────────────────────────────────────────────────────
+let cutsceneNodes = [];
+
+function csNode(...nodes) { cutsceneNodes.push(...nodes); }
+
+function csDrone(ac, dest, t0, at, freq, dur, vol = 0.28) {
+  const o = ac.createOscillator();
+  o.type = 'sawtooth'; o.frequency.value = freq;
+  const vib = ac.createOscillator(); vib.frequency.value = 4.2;
+  const vibG = ac.createGain(); vibG.gain.value = freq * 0.007;
+  vib.connect(vibG); vibG.connect(o.frequency);
+  const f = ac.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 900;
+  const g = ac.createGain();
+  g.gain.setValueAtTime(0, t0 + at);
+  g.gain.linearRampToValueAtTime(vol, t0 + at + 0.18);
+  g.gain.setValueAtTime(vol * 0.85, t0 + at + dur - 0.35);
+  g.gain.linearRampToValueAtTime(0, t0 + at + dur);
+  o.connect(f); f.connect(g); g.connect(dest);
+  vib.start(t0 + at); o.start(t0 + at); vib.stop(t0 + at + dur); o.stop(t0 + at + dur);
+  csNode(o, vib, g);
+}
+
+function csTimp(ac, dest, t0, at, freq, vol = 0.7) {
+  const o = ac.createOscillator();
+  o.frequency.setValueAtTime(freq, t0 + at);
+  o.frequency.exponentialRampToValueAtTime(freq * 0.32, t0 + at + 0.45);
+  const g = ac.createGain();
+  g.gain.setValueAtTime(vol, t0 + at);
+  g.gain.exponentialRampToValueAtTime(0.001, t0 + at + 0.55);
+  o.connect(g); g.connect(dest);
+  o.start(t0 + at); o.stop(t0 + at + 0.6);
+  csNode(o, g);
+}
+
+function csStab(ac, dest, t0, at, freq, vol = 0.5) {
+  const o = ac.createOscillator();
+  o.type = 'sawtooth'; o.frequency.value = freq;
+  const f = ac.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 1400;
+  const g = ac.createGain();
+  g.gain.setValueAtTime(vol, t0 + at);
+  g.gain.exponentialRampToValueAtTime(0.001, t0 + at + 0.22);
+  o.connect(f); f.connect(g); g.connect(dest);
+  o.start(t0 + at); o.stop(t0 + at + 0.25);
+  csNode(o, g);
+}
+
+function csCrash(ac, dest, t0, at, vol = 0.9) {
+  const bufLen = Math.floor(ac.sampleRate * 1.4);
+  const buf = ac.createBuffer(1, bufLen, ac.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < bufLen; i++) d[i] = Math.random() * 2 - 1;
+  const src = ac.createBufferSource(); src.buffer = buf;
+  const f = ac.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = 2800; f.Q.value = 0.5;
+  const g = ac.createGain();
+  g.gain.setValueAtTime(vol, t0 + at);
+  g.gain.exponentialRampToValueAtTime(0.001, t0 + at + 1.4);
+  src.connect(f); f.connect(g); g.connect(dest);
+  src.start(t0 + at);
+  csNode(src, g);
+}
+
+function startCutsceneMusic() {
+  stopCutsceneMusic();
+  const ac = getAudioCtx();
+  const t0 = ac.currentTime + 0.05;
+
+  const dest = ac.createGain(); dest.gain.value = 0.55; dest.connect(ac.destination);
+  csNode(dest);
+
+  // ── ACT 1: Ominous foreboding (0–3 s) ────────────────────────────────────
+  csDrone(ac, dest, t0, 0.00,  55.0, 3.6, 0.38); // A1 drone
+  csDrone(ac, dest, t0, 0.30,  82.4, 3.2, 0.18); // E2 fifth overtone
+  csTimp (ac, dest, t0, 0.00,  80,   0.65);       // opening thud
+  csTimp (ac, dest, t0, 1.00,  75,   0.55);
+  csTimp (ac, dest, t0, 2.00,  75,   0.55);
+  csTimp (ac, dest, t0, 2.50,  65,   0.55);
+  csTimp (ac, dest, t0, 2.75,  65,   0.65);       // pre-attack pulse
+
+  // ── ACT 2: T-Rex attacks! (3–6 s) ────────────────────────────────────────
+  csCrash(ac, dest, t0, 3.00, 1.05);              // T-Rex entrance CRASH
+  csDrone(ac, dest, t0, 3.00,  55.0, 3.1, 0.42);
+  csTimp (ac, dest, t0, 3.00,  95,   0.95);       // attack downbeat
+  csStab (ac, dest, t0, 3.18, 220,   0.62);
+  csStab (ac, dest, t0, 3.38, 247,   0.55);
+  csStab (ac, dest, t0, 3.58, 262,   0.55);
+  csTimp (ac, dest, t0, 3.72,  88,   0.75);
+  csStab (ac, dest, t0, 3.88, 220,   0.58);
+  csStab (ac, dest, t0, 4.08, 196,   0.52);
+  csStab (ac, dest, t0, 4.28, 175,   0.52);       // descending = dread
+  csTimp (ac, dest, t0, 4.45,  82,   0.82);
+  csTimp (ac, dest, t0, 4.65,  82,   0.85);
+  csTimp (ac, dest, t0, 4.82,  82,   0.92);       // rapid build to chomp
+  // chomp lands at ~5.16 s (3 s + 3 s × 0.72)
+  csCrash(ac, dest, t0, 5.12, 1.30);              // CHOMP impact
+  csTimp (ac, dest, t0, 5.12,  42,   1.00);       // sub bass hit
+
+  // ── ACT 3: VENGEANCE! (6–8.7 s) ──────────────────────────────────────────
+  csDrone(ac, dest, t0, 6.00,  55.0, 2.9, 0.48);
+  csDrone(ac, dest, t0, 6.00, 110.0, 2.9, 0.32); // octave power
+  csTimp (ac, dest, t0, 6.00, 105,   1.00);       // rage opener
+  csStab (ac, dest, t0, 6.22, 220,   0.68);
+  csStab (ac, dest, t0, 6.42, 220,   0.68);
+  csStab (ac, dest, t0, 6.58, 262,   0.72);
+  csTimp (ac, dest, t0, 6.72,  95,   0.85);
+  csStab (ac, dest, t0, 6.88, 330,   0.72);
+  csStab (ac, dest, t0, 7.08, 392,   0.78);
+  csTimp (ac, dest, t0, 7.12, 105,   0.90);
+  csStab (ac, dest, t0, 7.28, 440,   0.85);       // climax!
+  csTimp (ac, dest, t0, 7.50, 105,   0.82);
+}
+
+function stopCutsceneMusic() {
+  for (const n of cutsceneNodes) {
+    try { n.stop?.(); n.disconnect(); } catch (_) {}
+  }
+  cutsceneNodes = [];
+}
+
+// ── Victory music ─────────────────────────────────────────────────────────────
+let victoryNodes = [];
+
+function vmNote(ac, dest, t0, at, freq, dur, vol = 0.5) {
+  const o = ac.createOscillator();
+  o.type = 'triangle'; o.frequency.value = freq;
+  const g = ac.createGain();
+  g.gain.setValueAtTime(0, t0 + at);
+  g.gain.linearRampToValueAtTime(vol, t0 + at + 0.02);
+  g.gain.setValueAtTime(vol * 0.82, t0 + at + dur * 0.7);
+  g.gain.exponentialRampToValueAtTime(0.001, t0 + at + dur);
+  o.connect(g); g.connect(dest);
+  o.start(t0 + at); o.stop(t0 + at + dur + 0.05);
+  victoryNodes.push(o, g);
+}
+
+function vmKick(ac, dest, t0, at, vol = 0.85) {
+  const o = ac.createOscillator();
+  o.frequency.setValueAtTime(180, t0 + at);
+  o.frequency.exponentialRampToValueAtTime(45, t0 + at + 0.18);
+  const g = ac.createGain();
+  g.gain.setValueAtTime(vol, t0 + at); g.gain.exponentialRampToValueAtTime(0.001, t0 + at + 0.2);
+  o.connect(g); g.connect(dest); o.start(t0 + at); o.stop(t0 + at + 0.22);
+  victoryNodes.push(o, g);
+}
+
+function vmWood(ac, dest, t0, at, vol = 0.55) {
+  const o = ac.createOscillator();
+  o.frequency.setValueAtTime(900, t0 + at);
+  o.frequency.exponentialRampToValueAtTime(420, t0 + at + 0.05);
+  const g = ac.createGain();
+  g.gain.setValueAtTime(vol, t0 + at); g.gain.exponentialRampToValueAtTime(0.001, t0 + at + 0.07);
+  o.connect(g); g.connect(dest); o.start(t0 + at); o.stop(t0 + at + 0.08);
+  victoryNodes.push(o, g);
+}
+
+function startVictoryMusic() {
+  stopVictoryMusic();
+  const ac = getAudioCtx();
+  const t0 = ac.currentTime + 0.08;
+
+  const dest = ac.createGain(); dest.gain.value = 0.52; dest.connect(ac.destination);
+  victoryNodes.push(dest);
+
+  // Ascending fanfare run: G4 A4 C5 E5 → G5 hold
+  vmNote(ac, dest, t0, 0.00, 392,  0.13, 0.55);   // G4
+  vmNote(ac, dest, t0, 0.14, 440,  0.13, 0.55);   // A4
+  vmNote(ac, dest, t0, 0.28, 523,  0.13, 0.60);   // C5
+  vmNote(ac, dest, t0, 0.42, 659,  0.18, 0.65);   // E5
+  vmNote(ac, dest, t0, 0.61, 784,  0.55, 0.72);   // G5 — hold!
+
+  // Second phrase: quick C5 E5 G5 → big C6 finale
+  vmNote(ac, dest, t0, 1.25, 523,  0.11, 0.55);   // C5
+  vmNote(ac, dest, t0, 1.38, 659,  0.11, 0.58);   // E5
+  vmNote(ac, dest, t0, 1.51, 784,  0.11, 0.62);   // G5
+  vmNote(ac, dest, t0, 1.65, 1047, 1.10, 0.70);   // C6 — finale!
+
+  // Harmony (octave below)
+  vmNote(ac, dest, t0, 0.00, 196,  0.13, 0.22);
+  vmNote(ac, dest, t0, 0.14, 220,  0.13, 0.22);
+  vmNote(ac, dest, t0, 0.28, 262,  0.13, 0.24);
+  vmNote(ac, dest, t0, 0.42, 330,  0.18, 0.26);
+  vmNote(ac, dest, t0, 0.61, 392,  0.55, 0.28);
+  vmNote(ac, dest, t0, 1.65, 523,  1.10, 0.28);
+
+  // Percussion
+  vmKick(ac, dest, t0, 0.00); vmWood(ac, dest, t0, 0.00);
+  vmWood(ac, dest, t0, 0.22); vmWood(ac, dest, t0, 0.44);
+  vmKick(ac, dest, t0, 0.61); vmWood(ac, dest, t0, 0.61);
+  vmWood(ac, dest, t0, 0.83); vmWood(ac, dest, t0, 1.05);
+  vmKick(ac, dest, t0, 1.25); vmWood(ac, dest, t0, 1.25);
+  vmWood(ac, dest, t0, 1.38); vmWood(ac, dest, t0, 1.51);
+  vmKick(ac, dest, t0, 1.65); vmWood(ac, dest, t0, 1.65);
+  vmWood(ac, dest, t0, 1.88); vmWood(ac, dest, t0, 2.10);
+}
+
+function stopVictoryMusic() {
+  for (const n of victoryNodes) {
+    try { n.stop?.(); n.disconnect(); } catch (_) {}
+  }
+  victoryNodes = [];
 }
 
 // ── Particles ────────────────────────────────────────────────────────────────
@@ -304,6 +525,8 @@ function resetGame() {
   gameOver = false;
   won = false;
   enemies = createEnemies();
+  stopCutsceneMusic();
+  stopVictoryMusic();
   startMusic();
 }
 
@@ -379,6 +602,7 @@ function update(dt = 1) {
   // Fell off screen
   if (player.y > H + 80) {
     gameOver = true;
+    stopMusic();
   }
 
   // Enemy player damage
@@ -391,7 +615,7 @@ function update(dt = 1) {
         player.vy = -9;
         player.vx = player.facing * -5;
         burst(player.x + player.w / 2, player.y, ['#FF3300','#FF9900'], 8);
-        if (player.hp <= 0) { gameOver = true; break; }
+        if (player.hp <= 0) { gameOver = true; stopMusic(); break; }
       }
     }
   }
@@ -426,7 +650,7 @@ function update(dt = 1) {
   camX = Math.max(0, camX);
 
   // Win condition: walk into the cave
-  if (overlaps(player, cave)) { won = true; saveGame(); }
+  if (overlaps(player, cave)) { won = true; saveGame(); stopMusic(); startVictoryMusic(); }
 }
 
 // ── Draw helpers ─────────────────────────────────────────────────────────────
