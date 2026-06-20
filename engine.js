@@ -87,7 +87,7 @@ const SWING_HIT_END   = 12;
 let audioCtx = null;
 function getAudioCtx() {
   if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  if (audioCtx.state === 'suspended') audioCtx.resume();
+  if (audioCtx.state === 'suspended' && !paused) audioCtx.resume();
   return audioCtx;
 }
 
