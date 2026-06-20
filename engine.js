@@ -70,6 +70,159 @@ const SWING_DUR = 16;
 const SWING_HIT_START = 3;
 const SWING_HIT_END   = 12;
 
+// ── Audio ─────────────────────────────────────────────────────────────────────
+let audioCtx = null;
+function getAudioCtx() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+  return audioCtx;
+}
+
+function playWhack() {
+  const ac = getAudioCtx();
+  const now = ac.currentTime;
+
+  // Crack: bandpass-filtered noise burst
+  const bufLen = Math.floor(ac.sampleRate * 0.12);
+  const buf = ac.createBuffer(1, bufLen, ac.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < bufLen; i++) d[i] = (Math.random() * 2 - 1) * Math.exp(-i / (bufLen * 0.25));
+  const noise = ac.createBufferSource();
+  noise.buffer = buf;
+  const filter = ac.createBiquadFilter();
+  filter.type = 'bandpass';
+  filter.frequency.value = 900;
+  filter.Q.value = 1.2;
+  const noiseGain = ac.createGain();
+  noiseGain.gain.setValueAtTime(0.55, now);
+  noiseGain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+  noise.connect(filter); filter.connect(noiseGain); noiseGain.connect(ac.destination);
+  noise.start(now);
+
+  // Thud: descending sine for the impact body
+  const osc = ac.createOscillator();
+  osc.frequency.setValueAtTime(200, now);
+  osc.frequency.exponentialRampToValueAtTime(55, now + 0.1);
+  const oscGain = ac.createGain();
+  oscGain.gain.setValueAtTime(0.5, now);
+  oscGain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
+  osc.connect(oscGain); oscGain.connect(ac.destination);
+  osc.start(now); osc.stop(now + 0.1);
+}
+
+// ── Music ─────────────────────────────────────────────────────────────────────
+const MUSIC_BPM  = 110;
+const MUSIC_STEP = (60 / MUSIC_BPM) / 4; // 16th-note duration in seconds
+
+// A minor pentatonic, two octaves
+const PENTA = [110, 130.81, 146.83, 164.81, 196, 220, 261.63, 293.66, 329.63, 392, 440];
+//              A2    C3      D3      E3     G3   A3    C4      D4      E4     G4   A4
+
+// 16-step drum patterns (1 = hit, 0 = rest)
+const PAT_KICK = [1,0,0,0, 1,0,0,1, 1,0,0,0, 1,0,0,0];
+const PAT_WOOD = [0,0,1,0, 0,0,1,0, 0,0,1,0, 0,0,1,0];
+const PAT_HHAT = [1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,0];
+
+// 32-step melody and bass (PENTA index, -1 = rest)
+const PAT_MELODY = [
+  5,-1,6,-1, 7,-1,6,-1, 5,-1,-1,-1, 4,-1,5,-1,
+  5,-1,-1,-1, 3,-1,4,-1, 5,-1,-1,-1, -1,-1,-1,-1,
+];
+const PAT_BASS = [
+  0,-1,-1,-1, -1,-1,-1,-1, 0,-1,-1,-1, -1,-1,-1,-1,
+  0,-1,-1,-1, -1,-1,-1,-1, 4,-1,-1,-1, 0,-1,-1,-1,
+];
+
+let musicGain = null, musicScheduler = null, musicBeat = 0, nextNoteTime = 0;
+
+function getMusicGain() {
+  if (!musicGain) {
+    const ac = getAudioCtx();
+    musicGain = ac.createGain();
+    musicGain.gain.value = 0.32;
+    musicGain.connect(ac.destination);
+  }
+  return musicGain;
+}
+
+function mKick(ac, when) {
+  const o = ac.createOscillator();
+  o.frequency.setValueAtTime(160, when);
+  o.frequency.exponentialRampToValueAtTime(38, when + 0.18);
+  const g = ac.createGain();
+  g.gain.setValueAtTime(1.0, when); g.gain.exponentialRampToValueAtTime(0.001, when + 0.2);
+  o.connect(g); g.connect(getMusicGain()); o.start(when); o.stop(when + 0.2);
+}
+
+function mWood(ac, when) {
+  const o = ac.createOscillator();
+  o.frequency.setValueAtTime(700, when);
+  o.frequency.exponentialRampToValueAtTime(350, when + 0.04);
+  const g = ac.createGain();
+  g.gain.setValueAtTime(0.6, when); g.gain.exponentialRampToValueAtTime(0.001, when + 0.06);
+  o.connect(g); g.connect(getMusicGain()); o.start(when); o.stop(when + 0.06);
+}
+
+function mHihat(ac, when) {
+  const bufLen = Math.floor(ac.sampleRate * 0.025);
+  const buf = ac.createBuffer(1, bufLen, ac.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < bufLen; i++) d[i] = Math.random() * 2 - 1;
+  const src = ac.createBufferSource();
+  src.buffer = buf;
+  const f = ac.createBiquadFilter();
+  f.type = 'highpass'; f.frequency.value = 9000;
+  const g = ac.createGain();
+  g.gain.setValueAtTime(0.15, when); g.gain.exponentialRampToValueAtTime(0.001, when + 0.025);
+  src.connect(f); f.connect(g); g.connect(getMusicGain()); src.start(when);
+}
+
+function mNote(ac, freq, when) {
+  const o = ac.createOscillator();
+  o.type = 'triangle'; o.frequency.value = freq;
+  const dur = MUSIC_STEP * 1.8;
+  const g = ac.createGain();
+  g.gain.setValueAtTime(0.0, when);
+  g.gain.linearRampToValueAtTime(0.35, when + 0.01);
+  g.gain.setValueAtTime(0.3, when + dur * 0.65);
+  g.gain.exponentialRampToValueAtTime(0.001, when + dur);
+  o.connect(g); g.connect(getMusicGain()); o.start(when); o.stop(when + dur);
+}
+
+function mBass(ac, freq, when) {
+  const o = ac.createOscillator();
+  o.type = 'sawtooth'; o.frequency.value = freq;
+  const f = ac.createBiquadFilter();
+  f.type = 'lowpass'; f.frequency.value = 280;
+  const dur = MUSIC_STEP * 3.5;
+  const g = ac.createGain();
+  g.gain.setValueAtTime(0.55, when); g.gain.exponentialRampToValueAtTime(0.001, when + dur);
+  o.connect(f); f.connect(g); g.connect(getMusicGain()); o.start(when); o.stop(when + dur);
+}
+
+function scheduleMusicStep() {
+  const ac = getAudioCtx();
+  while (nextNoteTime < ac.currentTime + 0.15) {
+    const s16 = musicBeat % 16;
+    const s32 = musicBeat % 32;
+    const t   = nextNoteTime;
+    if (PAT_KICK[s16])        mKick(ac, t);
+    if (PAT_WOOD[s16])        mWood(ac, t);
+    if (PAT_HHAT[s16])        mHihat(ac, t);
+    if (PAT_MELODY[s32] >= 0) mNote(ac, PENTA[PAT_MELODY[s32]], t);
+    if (PAT_BASS[s32]   >= 0) mBass(ac, PENTA[PAT_BASS[s32]], t);
+    nextNoteTime += MUSIC_STEP;
+    musicBeat++;
+  }
+}
+
+function startMusic() {
+  if (musicScheduler) return;
+  const ac = getAudioCtx();
+  nextNoteTime = ac.currentTime + 0.05;
+  musicScheduler = setInterval(scheduleMusicStep, 50);
+}
+
 // ── Particles ────────────────────────────────────────────────────────────────
 let particles = [];
 function burst(x, y, colors, count = 10) {
@@ -151,6 +304,7 @@ function resetGame() {
   gameOver = false;
   won = false;
   enemies = createEnemies();
+  startMusic();
 }
 
 // ── Update ───────────────────────────────────────────────────────────────────
@@ -180,6 +334,7 @@ function update(dt = 1) {
   if (keys['ArrowDown'] && !player.swinging) {
     player.swinging = true;
     player.swingFrame = 0;
+    playWhack();
   }
   if (player.swinging) {
     player.swingFrame += dt;
