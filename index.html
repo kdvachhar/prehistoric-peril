@@ -275,7 +275,7 @@ function resetGame() {
 }
 
 // ── Update ───────────────────────────────────────────────────────────────────
-function update() {
+function update(dt = 1) {
   if (paused) return;
   if (gameOver || won) {
     if (keys['KeyR']) resetGame();
@@ -285,10 +285,10 @@ function update() {
   // Horizontal
   if (keys['ArrowLeft'])  { player.vx = -WALK_SPD; player.facing = -1; }
   else if (keys['ArrowRight']) { player.vx =  WALK_SPD; player.facing =  1; }
-  else player.vx *= 0.65;
+  else player.vx *= Math.pow(0.65, dt);
 
   if (Math.abs(player.vx) > 0.2 && player.onGround)
-    player.walkCycle += 0.25;
+    player.walkCycle += 0.25 * dt;
 
   // Jump
   if (keys['ArrowUp'] && player.onGround) {
@@ -303,7 +303,7 @@ function update() {
     player.swingFrame = 0;
   }
   if (player.swinging) {
-    player.swingFrame++;
+    player.swingFrame += dt;
     if (player.swingFrame >= SWING_DUR) player.swinging = false;
 
     // Hitbox active window
@@ -325,9 +325,9 @@ function update() {
   }
 
   // Gravity + movement
-  player.vy += GRAVITY;
-  player.x += player.vx;
-  player.y += player.vy;
+  player.vy += GRAVITY * dt;
+  player.x  += player.vx * dt;
+  player.y  += player.vy * dt;
 
   // Platform landing
   player.onGround = false;
@@ -366,15 +366,15 @@ function update() {
       }
     }
   }
-  if (player.invincible > 0) player.invincible--;
+  if (player.invincible > 0) player.invincible -= dt;
 
   // Enemy AI: patrol platform edges
   for (const e of enemies) {
     if (!e.alive) continue;
-    if (e.hitFlash > 0) e.hitFlash--;
+    if (e.hitFlash > 0) e.hitFlash -= dt;
 
     const plat = platforms[e.platRef];
-    e.x += e.vx * e.dir;
+    e.x += e.vx * e.dir * dt;
 
     // Reverse at platform edges
     if (e.x <= plat.x) { e.x = plat.x; e.dir = 1; }
@@ -384,16 +384,16 @@ function update() {
   // Particles
   for (let i = particles.length - 1; i >= 0; i--) {
     const p = particles[i];
-    p.x += p.vx;
-    p.y += p.vy;
-    p.vy += 0.25;
-    p.life--;
+    p.x   += p.vx * dt;
+    p.y   += p.vy * dt;
+    p.vy  += 0.25 * dt;
+    p.life -= dt;
     if (p.life <= 0) particles.splice(i, 1);
   }
 
   // Camera follows player with lead
   const targetCamX = player.x - W * 0.35;
-  camX += (targetCamX - camX) * 0.1;
+  camX += (targetCamX - camX) * 0.1 * dt;
   camX = Math.max(0, camX);
 
   // Win condition: walk into the cave
