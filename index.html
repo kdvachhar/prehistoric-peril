@@ -30,10 +30,10 @@
   </style>
 </head>
 <body>
-<canvas id="c" width="900" height="520"></canvas>
+<canvas id="main-game-display" width="900" height="520"></canvas>
 <div id="controls">← →: Move &nbsp;|&nbsp; ↑: Jump &nbsp;|&nbsp; ↓: Swing Bat &nbsp;|&nbsp; Space: Pause &nbsp;|&nbsp; R: Restart</div>
 <script>
-const canvas = document.getElementById('c');
+const canvas = document.getElementById('main-game-display');
 const dispCtx = canvas.getContext('2d');
 dispCtx.imageSmoothingEnabled = false;
 const W = canvas.width, H = canvas.height;
