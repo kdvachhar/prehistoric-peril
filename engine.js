@@ -1113,7 +1113,7 @@ function drawCutscene() {
   function drawCSTRex(x, y, sc = 1, jawOpen = 0.5) {
     ctx.save();
     ctx.translate(x, y);
-    ctx.scale(-sc * 0.45, sc * 0.45); // face left
+    ctx.scale(sc * 0.7, sc * 0.7); // face right
 
     // Tail
     ctx.fillStyle = '#2a6818';
@@ -1165,7 +1165,7 @@ function drawCutscene() {
     // Lower jaw (rotates open)
     ctx.save();
     ctx.translate(-158, -88);
-    ctx.rotate(jawOpen * 0.55);
+    ctx.rotate(-jawOpen * 0.55);
     ctx.fillStyle = '#2a6818';
     ctx.fillRect(-52, 0, 130, 32);
     ctx.fillStyle = '#f0f0d0';
