@@ -1109,13 +1109,19 @@ function drawTitleScreen() {
 }
 
 // ── Game loop ─────────────────────────────────────────────────────────────────
-function loop() {
-  ctx.clearRect(0, 0, W, H);
+let lastTime = null;
 
+function loop(timestamp) {
+  // dt is normalized to 1.0 at 60 fps; cap at 100 ms to avoid spike after tab switch
+  const elapsed = lastTime !== null ? Math.min(timestamp - lastTime, 100) : 1000 / 60;
+  lastTime = timestamp;
+  const dt = elapsed / (1000 / 60);
+
+  ctx.clearRect(0, 0, W, H);
   if (titleScreen) {
     drawTitleScreen();
   } else {
-    update();
+    update(dt);
     drawBG();
     drawPlatforms();
     drawCave();
@@ -1135,7 +1141,7 @@ function loop() {
   requestAnimationFrame(loop);
 }
 
-loop();
+requestAnimationFrame(loop);
 </script>
 </body>
 </html>
