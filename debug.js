@@ -38,7 +38,14 @@
 
       <p style="margin: 0 0 8px; font-size: 11px; text-transform: uppercase;
                 letter-spacing: 0.1em; color: #6c7086;">Cutscenes</p>
-      <div id="dbg-cutscenes" style="display: flex; gap: 8px;"></div>
+      <div id="dbg-cutscenes" style="display: flex; gap: 8px; margin-bottom: 20px;"></div>
+
+      <p style="margin: 0 0 8px; font-size: 11px; text-transform: uppercase;
+                letter-spacing: 0.1em; color: #6c7086;">Cheats</p>
+      <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 14px;">
+        <input type="checkbox" id="dbg-invincible" style="width: 16px; height: 16px; cursor: pointer;">
+        Invincible
+      </label>
     </div>
   `;
   document.body.appendChild(overlay);
@@ -62,6 +69,12 @@
     b.addEventListener('click', onClick);
     return b;
   }
+
+  // ── Invincibility checkbox ───────────────────────────────────────────────────
+  document.getElementById('dbg-invincible').addEventListener('change', function () {
+    debugInvincible = this.checked;
+    player.invincible = debugInvincible ? Infinity : 0;
+  });
 
   // ── Cutscene button (static) ─────────────────────────────────────────────────
   document.getElementById('dbg-cutscenes').appendChild(

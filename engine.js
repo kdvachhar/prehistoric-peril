@@ -473,6 +473,8 @@ function burst(x, y, colors, count = 10) {
 }
 
 // ── Player ───────────────────────────────────────────────────────────────────
+let debugInvincible = false;
+
 function resetPlayer() {
   return {
     x: 80, y: 380,
@@ -483,7 +485,7 @@ function resetPlayer() {
     swinging: false,
     swingFrame: 0,
     hp: 5,
-    invincible: 0,
+    invincible: debugInvincible ? Infinity : 0,
     score: 0,
     walkCycle: 0,
   };
