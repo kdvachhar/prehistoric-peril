@@ -652,17 +652,11 @@ function update(dt = 1) {
   }
   if (player.invincible > 0) player.invincible -= dt;
 
-  // Enemy AI: patrol platform edges
+  // Enemy AI — each enemy owns its behaviour via update(e, dt)
   for (const e of enemies) {
     if (!e.alive) continue;
     if (e.hitFlash > 0) e.hitFlash -= dt;
-
-    const plat = currentLevel.platforms[e.platRef];
-    e.x += e.vx * e.dir * dt;
-
-    // Reverse at patrol bounds
-    if (e.x <= e.patrolLeft)  { e.x = e.patrolLeft;  e.dir = 1; }
-    if (e.x + e.w >= e.patrolRight) { e.x = e.patrolRight - e.w; e.dir = -1; }
+    e.update(e, dt);
   }
 
   // Particles

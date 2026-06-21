@@ -86,19 +86,31 @@ const LEVEL2 = (() => {
 
   function makeEnemy(x, platRef, speed, range = 110) {
     const plat = platforms[platRef];
+    const patrolLeft  = Math.max(plat.x, x - range);
+    const patrolRight = Math.min(plat.x + plat.w, x + range);
     return { x, y: plat.y - 44, w: 44, h: 44, vx: speed * 1.8, dir: 1,
              alive: true, hp: 1, maxHp: 1, platRef, hitFlash: 0,
-             patrolLeft:  Math.max(plat.x, x - range),
-             patrolRight: Math.min(plat.x + plat.w, x + range) };
+             patrolLeft, patrolRight,
+             update(e, dt) {
+               e.x += e.vx * e.dir * dt;
+               if (e.x <= e.patrolLeft)              { e.x = e.patrolLeft;              e.dir = 1; }
+               if (e.x + e.w >= e.patrolRight) { e.x = e.patrolRight - e.w; e.dir = -1; }
+             } };
   }
 
   function makeLeopard(x, platRef, speed, range = 200) {
     const plat = platforms[platRef];
+    const patrolLeft  = Math.max(plat.x, x - range);
+    const patrolRight = Math.min(plat.x + plat.w, x + range);
     return { x, y: plat.y - 44, w: 44, h: 44, vx: speed * 2.4, dir: 1,
              alive: true, hp: 2, maxHp: 2, platRef, hitFlash: 0,
              type: 'leopard',
-             patrolLeft:  Math.max(plat.x, x - range),
-             patrolRight: Math.min(plat.x + plat.w, x + range) };
+             patrolLeft, patrolRight,
+             update(e, dt) {
+               e.x += e.vx * e.dir * dt;
+               if (e.x <= e.patrolLeft)              { e.x = e.patrolLeft;              e.dir = 1; }
+               if (e.x + e.w >= e.patrolRight) { e.x = e.patrolRight - e.w; e.dir = -1; }
+             } };
   }
 
   function createEnemies() {
