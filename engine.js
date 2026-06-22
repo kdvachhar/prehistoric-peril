@@ -670,6 +670,7 @@ function initBoss() {
 }
 
 function resetGame() {
+  playerMaxHp = 5;
   player = resetPlayer();
   camX = 0;
   particles = [];

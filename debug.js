@@ -127,6 +127,8 @@
 
   function jumpToCutscene() {
     close();
+    currentLevelIdx = 0;
+    currentLevel    = LEVELS[0];
     titleScreen  = false;
     cutscene     = true;
     cutsceneTime = 0;
