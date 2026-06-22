@@ -52,6 +52,7 @@ canvas.addEventListener('click', e => {
   if (ptInBtn(mx, my, btnNew)) {
     currentLevelIdx = 0;
     currentLevel    = LEVELS[0];
+    playerMaxHp = 5;
     titleScreen = false;
     cutscene = true;
     cutsceneTime = 0;
@@ -244,7 +245,7 @@ function scheduleMusicStep() {
 }
 
 function startMusic() {
-  if (musicScheduler) return;
+  if (musicScheduler || bossMusicScheduler) return;
   const ac = getAudioCtx();
   getMusicGain(); // create gain node eagerly so gain can be set immediately
   nextNoteTime = ac.currentTime + 0.05;
@@ -593,6 +594,7 @@ function burst(x, y, colors, count = 10) {
 
 // ── Player ───────────────────────────────────────────────────────────────────
 let debugInvincible = false;
+let playerMaxHp = 5;
 
 function resetPlayer() {
   return {
@@ -603,7 +605,8 @@ function resetPlayer() {
     facing: 1,
     swinging: false,
     swingFrame: 0,
-    hp: 5,
+    hp: playerMaxHp,
+    maxHp: playerMaxHp,
     invincible: debugInvincible ? Infinity : 0,
     score: 0,
     walkCycle: 0,
@@ -655,6 +658,7 @@ const CS_ACT3 = 520;  // vengeance scene → fade to game
 let boss            = null;
 let bossProjectiles = [];
 let bossTriggered   = false;
+let bossHeart       = null;
 
 function initBoss() {
   return {
@@ -673,7 +677,7 @@ function resetGame() {
   won = false;
   wonTimer = 0;
   enemies = currentLevel.createEnemies();
-  boss = null; bossProjectiles = []; bossTriggered = false;
+  boss = null; bossProjectiles = []; bossTriggered = false; bossHeart = null;
   stopCutsceneMusic();
   stopVictoryMusic();
   stopBossMusic();
@@ -760,6 +764,7 @@ function update(dt = 1) {
             boss.dead = true;
             stopBossMusic();
             startMusic();
+            bossHeart = { x: 700, y: 405, w: 36, h: 36, bobT: 0 };
             bloodBurst(700, 420, 40);
             bloodBurst(740, 430, 35);
             bloodBurst(780, 415, 35);
@@ -842,7 +847,7 @@ function update(dt = 1) {
 
     // Tongue platform
     if (boss && !boss.dead && boss.tongueLen > 10) {
-      const tp = { x: 700 - boss.tongueLen, y: 428, w: boss.tongueLen, h: 14 };
+      const tp = { x: 700 - boss.tongueLen, y: 440, w: boss.tongueLen, h: 14 };
       if (landedOn(player, tp, dt)) { player.y = tp.y - player.h; player.vy = 0; player.onGround = true; }
     }
     // Pond becomes solid platform when boss is dead
@@ -885,6 +890,17 @@ function update(dt = 1) {
   }
 
   // Win condition
+  if (bossHeart) {
+    bossHeart.bobT += dt;
+    if (overlaps(player, bossHeart)) {
+      playerMaxHp = 6;
+      player.maxHp = 6;
+      player.hp = 6;
+      burst(bossHeart.x, bossHeart.y, ['#FF3030','#FF6060','#FFD700','#FF9090'], 20);
+      bossHeart = null;
+    }
+  }
+
   const bossCleared = currentLevelIdx !== 2 || (boss && boss.dead);
   if (bossCleared && overlaps(player, currentLevel.cave)) { won = true; saveGame(); stopMusic(); startVictoryMusic(); }
 }
@@ -1004,7 +1020,7 @@ function drawBoss() {
 
   // Tongue
   if (boss.tongueLen > 2) {
-    const tl = boss.tongueLen, ty = by + 26;
+    const tl = boss.tongueLen, ty = by + 38;
     ctx.fillStyle = '#D0507A';
     ctx.fillRect(snoutX - tl, ty - 5, tl, 10);
     ctx.fillStyle = '#E87090';
@@ -1086,7 +1102,7 @@ function drawBoss() {
     const tIn  = Math.min((boss.stateTimer - 10) / 15, 1);
     const tOut = boss.stateTimer > 45 ? Math.min((boss.stateTimer - 45) / 20, 1) : 0;
     const reach = (tIn - tOut) * 480;
-    const cx2 = snoutX - reach, cy = by + 50;
+    const cx2 = snoutX - reach, cy = by + 62;
     ctx.strokeStyle = '#267826'; ctx.lineWidth = 9; ctx.lineCap = 'round';
     ctx.beginPath(); ctx.moveTo(snoutX + 8, by + 52);
     ctx.quadraticCurveTo(snoutX - reach * 0.45, cy - 14, cx2 + 16, cy); ctx.stroke();
@@ -1859,7 +1875,7 @@ function drawHUD() {
   ctx.fillText('HEALTH', 22, 56);
 
   // Row 2: hearts
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < player.maxHp; i++) {
     ctx.fillStyle = i < player.hp ? '#FF3030' : '#444';
     ctx.font = '40px sans-serif';
     ctx.fillText('♥', 22 + i * 38, 104);
@@ -2511,6 +2527,16 @@ function loop(timestamp) {
       if (e.alive) { if (e.type === 'leopard') drawLeopard(e); else drawEnemy(e); }
     }
     drawPlayer();
+    if (bossHeart) {
+      const bob = Math.sin(bossHeart.bobT * 0.08) * 7;
+      ctx.font = '44px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#FF3030';
+      ctx.shadowColor = '#FF9090';
+      ctx.shadowBlur = 12;
+      ctx.fillText('♥', sx(bossHeart.x + 18), bossHeart.y + bob);
+      ctx.shadowBlur = 0;
+    }
     drawHUD();
     if (currentLevelIdx === 2) drawBossHP();
     drawOverlay();

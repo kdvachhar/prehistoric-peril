@@ -123,7 +123,6 @@
     stopCutsceneMusic();
     stopVictoryMusic();
     resetGame();
-    startMusic();
   }
 
   function jumpToCutscene() {
