@@ -915,7 +915,7 @@ function updateBoss(dt) {
   boss.hitFlash    = Math.max(0, boss.hitFlash - dt);
   boss.hitCooldown = Math.max(0, boss.hitCooldown - dt);
 
-  const ATTACKS = ['waterballs', 'tongue', 'claw', 'tongue'];
+  const ATTACKS = ['waterballs', 'claw', 'tongue'];
 
   if (boss.state === 'idle') {
     if (boss.stateTimer > 70) {
