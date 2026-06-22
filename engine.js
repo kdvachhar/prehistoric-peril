@@ -13,7 +13,7 @@ ctx.imageSmoothingEnabled = false;
 ctx.scale(1 / PSCALE, 1 / PSCALE);
 
 // ── Levels ───────────────────────────────────────────────────────────────────
-const LEVELS = [LEVEL1, LEVEL2];
+const LEVELS = [LEVEL1, LEVEL2, LEVEL3];
 let currentLevelIdx = 0;
 let currentLevel    = LEVELS[0];
 
@@ -50,6 +50,8 @@ canvas.addEventListener('click', e => {
   const mx = (e.clientX - r.left) * (W / r.width);
   const my = (e.clientY - r.top)  * (H / r.height);
   if (ptInBtn(mx, my, btnNew)) {
+    currentLevelIdx = 0;
+    currentLevel    = LEVELS[0];
     titleScreen = false;
     cutscene = true;
     cutsceneTime = 0;
@@ -455,8 +457,125 @@ function stopVictoryMusic() {
   victoryNodes = [];
 }
 
+// ── Boss fight music ──────────────────────────────────────────────────────────
+const BOSS_BPM  = 148;
+const BOSS_STEP = (60 / BOSS_BPM) / 4;
+
+const BOSS_SCALE = [82.41, 98, 110, 123.47, 146.83, 164.81, 196, 220, 246.94, 293.66, 329.63];
+
+const BOSS_PAT_KICK  = [1,0,0,0, 0,0,0,1, 1,0,0,0, 0,0,0,0];
+const BOSS_PAT_SNARE = [0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0];
+const BOSS_PAT_HHAT  = [1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,0];
+const BOSS_PAT_MELODY = [
+  5,-1,4,-1, 3,-1,5,-1, 4,-1,3,-1, 2,-1,-1,-1,
+  5,-1,6,-1, 7,-1,5,-1, 4,-1,3,-1, -1,-1,2,-1,
+];
+const BOSS_PAT_BASS = [
+  0,-1,-1,-1, -1,-1,-1,-1, 2,-1,-1,-1, -1,-1,-1,-1,
+  0,-1,-1,-1, -1,-1,-1,-1, 3,-1,-1,-1, 0,-1,-1,-1,
+];
+
+let bossMusicScheduler = null, bossMusicBeat = 0, bossNextNoteTime = 0;
+
+function bmKick(ac, when) {
+  const o = ac.createOscillator();
+  o.frequency.setValueAtTime(200, when);
+  o.frequency.exponentialRampToValueAtTime(35, when + 0.22);
+  const g = ac.createGain();
+  g.gain.setValueAtTime(1.2, when); g.gain.exponentialRampToValueAtTime(0.001, when + 0.25);
+  o.connect(g); g.connect(getMusicGain()); o.start(when); o.stop(when + 0.25);
+}
+
+function bmSnare(ac, when) {
+  const bufLen = Math.floor(ac.sampleRate * 0.12);
+  const buf = ac.createBuffer(1, bufLen, ac.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < bufLen; i++) d[i] = (Math.random() * 2 - 1) * Math.exp(-i / (ac.sampleRate * 0.04));
+  const src = ac.createBufferSource();
+  src.buffer = buf;
+  const f = ac.createBiquadFilter();
+  f.type = 'bandpass'; f.frequency.value = 2200;
+  const g = ac.createGain();
+  g.gain.setValueAtTime(0.75, when); g.gain.exponentialRampToValueAtTime(0.001, when + 0.12);
+  src.connect(f); f.connect(g); g.connect(getMusicGain()); src.start(when);
+}
+
+function bmNote(ac, freq, when) {
+  const o = ac.createOscillator();
+  o.type = 'sawtooth'; o.frequency.value = freq;
+  const dur = BOSS_STEP * 1.6;
+  const f = ac.createBiquadFilter();
+  f.type = 'lowpass'; f.frequency.value = 800;
+  const g = ac.createGain();
+  g.gain.setValueAtTime(0.0, when);
+  g.gain.linearRampToValueAtTime(0.28, when + 0.01);
+  g.gain.setValueAtTime(0.22, when + dur * 0.65);
+  g.gain.exponentialRampToValueAtTime(0.001, when + dur);
+  o.connect(f); f.connect(g); g.connect(getMusicGain()); o.start(when); o.stop(when + dur);
+}
+
+function bmBass(ac, freq, when) {
+  const o = ac.createOscillator();
+  o.type = 'sawtooth'; o.frequency.value = freq;
+  const f = ac.createBiquadFilter();
+  f.type = 'lowpass'; f.frequency.value = 160;
+  const dur = BOSS_STEP * 3;
+  const g = ac.createGain();
+  g.gain.setValueAtTime(0.7, when); g.gain.exponentialRampToValueAtTime(0.001, when + dur);
+  o.connect(f); f.connect(g); g.connect(getMusicGain()); o.start(when); o.stop(when + dur);
+}
+
+function scheduleBossMusicStep() {
+  const ac = getAudioCtx();
+  if (bossNextNoteTime < ac.currentTime) bossNextNoteTime = ac.currentTime + 0.05;
+  while (bossNextNoteTime < ac.currentTime + 0.15) {
+    const s16 = bossMusicBeat % 16;
+    const s32 = bossMusicBeat % 32;
+    const t   = bossNextNoteTime;
+    if (BOSS_PAT_KICK[s16])        bmKick(ac, t);
+    if (BOSS_PAT_SNARE[s16])       bmSnare(ac, t);
+    if (BOSS_PAT_HHAT[s16])        mHihat(ac, t);
+    if (BOSS_PAT_MELODY[s32] >= 0) bmNote(ac, BOSS_SCALE[BOSS_PAT_MELODY[s32]], t);
+    if (BOSS_PAT_BASS[s32]   >= 0) bmBass(ac, BOSS_SCALE[BOSS_PAT_BASS[s32]], t);
+    bossNextNoteTime += BOSS_STEP;
+    bossMusicBeat++;
+  }
+}
+
+function startBossMusic() {
+  stopMusic();
+  if (bossMusicScheduler) return;
+  const ac = getAudioCtx();
+  getMusicGain();
+  bossNextNoteTime = ac.currentTime + 0.05;
+  bossMusicBeat = 0;
+  bossMusicScheduler = setInterval(scheduleBossMusicStep, 50);
+}
+
+function stopBossMusic() {
+  clearInterval(bossMusicScheduler);
+  bossMusicScheduler = null;
+}
+
 // ── Particles ────────────────────────────────────────────────────────────────
 let particles = [];
+function bloodBurst(x, y, count = 30) {
+  const colors = ['#CC0000','#880000','#FF2020','#AA1010','#FF6060','#660000'];
+  for (let i = 0; i < count; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = Math.random() * 12 + 3;
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed - 3,
+      r: Math.random() * 6 + 3,
+      color: colors[Math.floor(Math.random() * colors.length)],
+      life: 40 + Math.random() * 30,
+      maxLife: 70,
+    });
+  }
+}
+
 function burst(x, y, colors, count = 10) {
   for (let i = 0; i < count; i++) {
     const c = colors[Math.floor(Math.random() * colors.length)];
@@ -532,6 +651,20 @@ const CS_ACT1 = 180;  // wife scene
 const CS_ACT2 = 360;  // attack scene
 const CS_ACT3 = 520;  // vengeance scene → fade to game
 
+// ── Boss state ────────────────────────────────────────────────────────────────
+let boss            = null;
+let bossProjectiles = [];
+let bossTriggered   = false;
+
+function initBoss() {
+  return {
+    hp: 10, maxHp: 10, state: 'idle', stateTimer: 0, attackIdx: 0,
+    hitFlash: 0, hitCooldown: 0,
+    dead: false, sinkY: 0,
+    tongueLen: 0, tongueMaxLen: 380,
+  };
+}
+
 function resetGame() {
   player = resetPlayer();
   camX = 0;
@@ -540,9 +673,11 @@ function resetGame() {
   won = false;
   wonTimer = 0;
   enemies = currentLevel.createEnemies();
+  boss = null; bossProjectiles = []; bossTriggered = false;
   stopCutsceneMusic();
   stopVictoryMusic();
-  startMusic();
+  stopBossMusic();
+  if (currentLevelIdx === 2) startBossMusic(); else startMusic();
 }
 
 // ── Update ───────────────────────────────────────────────────────────────────
@@ -551,14 +686,15 @@ function update(dt = 1) {
   if (gameOver || won) {
     if (won) {
       wonTimer += dt;
-      if (wonTimer > 240 && currentLevelIdx < LEVELS.length - 1) {
+      const isLastLevel = currentLevelIdx >= LEVELS.length - 1;
+      const advance = keys['KeyR'] || wonTimer > 240 || isLastLevel || currentLevelIdx === 1;
+      if (advance && !isLastLevel) {
         currentLevelIdx++;
         currentLevel = LEVELS[currentLevelIdx];
         resetGame();
         return;
       }
-      if (wonTimer > 240) {
-        // last level complete — return to title
+      if (advance) {
         titleScreen = true;
         stopVictoryMusic();
         startMusic();
@@ -606,6 +742,29 @@ function update(dt = 1) {
           if (e.hp <= 0) {
             e.alive = false;
             burst(e.x + e.w / 2, e.y, ['#FFD700','#FFE86A','#FF8800'], 14);
+          }
+        }
+      }
+      // Boss hit — player must be on the tongue and swing at the mouth
+      if (currentLevelIdx === 2 && boss && !boss.dead && boss.hitCooldown <= 0 &&
+          boss.tongueLen > boss.tongueMaxLen * 0.65) {
+        const tongueY = 428;
+        const onTongue = Math.abs((player.y + player.h) - tongueY) < 16 &&
+                         player.x > (700 - boss.tongueLen - 20) && player.x < 701;
+        if (onTongue && overlaps(bat, { x: 635, y: 395, w: 80, h: 70 })) {
+          boss.hp--;
+          boss.hitFlash = 20;
+          boss.hitCooldown = 35;
+          burst(700, 420, ['#FFD700','#FF8800','#FF4444'], 14);
+          if (boss.hp <= 0) {
+            boss.dead = true;
+            stopBossMusic();
+            startMusic();
+            bloodBurst(700, 420, 40);
+            bloodBurst(740, 430, 35);
+            bloodBurst(780, 415, 35);
+            bloodBurst(820, 425, 30);
+            bloodBurst(760, 400, 30);
           }
         }
       }
@@ -674,8 +833,310 @@ function update(dt = 1) {
   camX += (targetCamX - camX) * 0.1 * dt;
   camX = Math.max(0, camX);
 
-  // Win condition: walk into the cave
-  if (overlaps(player, currentLevel.cave)) { won = true; saveGame(); stopMusic(); startVictoryMusic(); }
+  // ── Boss level (level 3) ────────────────────────────────────────────────────
+  if (currentLevelIdx === 2) {
+    // Auto-trigger boss when player enters the room
+    if (!bossTriggered) { bossTriggered = true; boss = initBoss(); }
+
+    updateBoss(dt);
+
+    // Tongue platform
+    if (boss && !boss.dead && boss.tongueLen > 10) {
+      const tp = { x: 700 - boss.tongueLen, y: 428, w: boss.tongueLen, h: 14 };
+      if (landedOn(player, tp, dt)) { player.y = tp.y - player.h; player.vy = 0; player.onGround = true; }
+    }
+    // Pond becomes solid platform when boss is dead
+    if (boss && boss.dead) {
+      const dp = { x: 500, y: 460, w: 390, h: 25 };
+      if (landedOn(player, dp, dt)) { player.y = dp.y - player.h; player.vy = 0; player.onGround = true; }
+    }
+    // Pond hazard
+    if (boss && !boss.dead && player.x + player.w > 505 && player.x < 885 &&
+        player.y + player.h > 443 && player.invincible <= 0) {
+      player.hp--; player.invincible = 90;
+      player.x = 250; player.y = 350; player.vx = 0; player.vy = 0;
+      burst(player.x + player.w / 2, 440, ['#3CA8D4','#7FD8F8','#FF3300'], 12);
+      if (player.hp <= 0) { gameOver = true; stopMusic(); }
+    }
+    // Claw damage
+    if (boss && !boss.dead && boss.state === 'claw' &&
+        boss.stateTimer > 10 && boss.stateTimer < 70 && player.invincible <= 0) {
+      const t = Math.min((boss.stateTimer - 10) / 15, 1) - Math.max((boss.stateTimer - 45) / 20, 0);
+      if (t > 0) {
+        const clawTipX = 700 - t * 480;
+        if (overlaps(player, { x: clawTipX - 20, y: 380, w: 140, h: 100 })) {
+          player.hp--; player.invincible = 80;
+          burst(player.x + player.w / 2, player.y + player.h / 2, ['#FF3300','#FF9900'], 8);
+          if (player.hp <= 0) { gameOver = true; stopMusic(); }
+        }
+      }
+    }
+    // Water ball damage
+    if (boss && !boss.dead && player.invincible <= 0) {
+      for (const pb of bossProjectiles) {
+        if (overlaps(player, { x: pb.x - 10, y: pb.y - 10, w: 20, h: 20 })) {
+          player.hp--; player.invincible = 80;
+          burst(pb.x, pb.y, ['#3CA8D4','#7FD8F8'], 8);
+          pb.y = 9999;
+          if (player.hp <= 0) { gameOver = true; stopMusic(); }
+        }
+      }
+    }
+  }
+
+  // Win condition
+  const bossCleared = currentLevelIdx !== 2 || (boss && boss.dead);
+  if (bossCleared && overlaps(player, currentLevel.cave)) { won = true; saveGame(); stopMusic(); startVictoryMusic(); }
+}
+
+// ── updateBoss ────────────────────────────────────────────────────────────────
+function updateBoss(dt) {
+  if (!boss || boss.dead) {
+    if (boss && boss.dead) boss.sinkY = Math.min(boss.sinkY + 0.04 * dt, 30);
+    return;
+  }
+  boss.stateTimer += dt;
+  boss.hitFlash    = Math.max(0, boss.hitFlash - dt);
+  boss.hitCooldown = Math.max(0, boss.hitCooldown - dt);
+
+  const ATTACKS = ['waterballs', 'tongue', 'claw', 'tongue'];
+
+  if (boss.state === 'idle') {
+    if (boss.stateTimer > 70) {
+      boss.state = ATTACKS[boss.attackIdx % ATTACKS.length];
+      boss.attackIdx++;
+      boss.stateTimer = 0;
+    }
+  } else if (boss.state === 'waterballs') {
+    if (boss.stateTimer % 5 < 1) {
+      bossProjectiles.push({ x: Math.random() * 500, y: -40,
+                             vx: (Math.random() - 0.5) * 1.5,
+                             vy: 4 + Math.random() * 2.5 });
+    }
+    if (boss.stateTimer > 160) { boss.state = 'idle'; boss.stateTimer = 0; }
+  } else if (boss.state === 'claw') {
+    if (boss.stateTimer > 80) { boss.state = 'idle'; boss.stateTimer = 0; }
+  } else if (boss.state === 'tongue') {
+    const tM = boss.tongueMaxLen;
+    if      (boss.stateTimer < 55)  boss.tongueLen = (boss.stateTimer / 55) * tM;
+    else if (boss.stateTimer < 220) boss.tongueLen = tM;
+    else if (boss.stateTimer < 275) boss.tongueLen = ((275 - boss.stateTimer) / 55) * tM;
+    else { boss.tongueLen = 0; boss.state = 'idle'; boss.stateTimer = 0; }
+  }
+
+  // Update projectiles
+  for (let i = bossProjectiles.length - 1; i >= 0; i--) {
+    const pb = bossProjectiles[i];
+    pb.x += pb.vx * dt; pb.y += pb.vy * dt;
+    if (pb.y > H + 20) bossProjectiles.splice(i, 1);
+  }
+}
+
+// ── Boss room draw functions ──────────────────────────────────────────────────
+function drawBossRoomBG() {
+  ctx.fillStyle = '#080810';
+  ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = '#1E1C18';
+  ctx.fillRect(0, 0, W, 190);
+  // Ceiling cracks
+  ctx.fillStyle = '#151210';
+  for (let i = 0; i < 8; i++) {
+    const cx2 = (i * 130 - camX * 0.05) % W;
+    ctx.fillRect(cx2, 50 + (i % 3) * 18, 2, 60 + (i % 2) * 30);
+  }
+  // Stalactites
+  ctx.fillStyle = '#2A2520';
+  for (let i = 0; i < 14; i++) {
+    const stx = ((i * 72 - camX * 0.5) % (W + 80) + W + 80) % (W + 80) - 40;
+    const sth = 28 + (i % 3) * 22;
+    ctx.beginPath(); ctx.moveTo(stx, 0); ctx.lineTo(stx + 10, sth); ctx.lineTo(stx + 20, 0); ctx.fill();
+  }
+  ctx.fillStyle = '#1A1712';
+  ctx.fillRect(0, 440, W, H - 440);
+  // Torches
+  for (const tx of [60, 220, 420, 620, 820, 1000]) {
+    const tsx = sx(tx);
+    if (tsx < -30 || tsx > W + 30) continue;
+    const flicker = 0.72 + 0.28 * Math.sin(Date.now() / 130 + tx * 0.01);
+    ctx.fillStyle = '#5A3820'; ctx.fillRect(tsx - 4, 195, 8, 22);
+    ctx.fillStyle = '#3A2010'; ctx.fillRect(tsx - 6, 210, 12, 8);
+    ctx.save(); ctx.globalAlpha = flicker;
+    ctx.fillStyle = '#FF7700'; ctx.beginPath(); ctx.arc(tsx, 192, 9, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#FFD000'; ctx.beginPath(); ctx.arc(tsx, 188, 5, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+    ctx.save(); ctx.globalAlpha = 0.07 * flicker;
+    ctx.fillStyle = '#FF8800'; ctx.beginPath(); ctx.arc(tsx, 200, 55, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
+}
+
+function drawPond() {
+  const px = sx(500);
+  const pw = 390;
+  if (boss && boss.dead) {
+    // Drained pond — solid stone floor
+    ctx.fillStyle = '#3A3530';
+    ctx.fillRect(px, 432, pw, 53);
+    ctx.fillStyle = '#4A4540';
+    ctx.fillRect(px, 432, pw, 4);
+    ctx.fillStyle = '#2A2520';
+    ctx.fillRect(px, 483, pw, 2);
+    ctx.fillStyle = '#302C28';
+    for (let rx = px + 12; rx < px + pw - 6; rx += 22) {
+      ctx.fillRect(rx, 442, 10, 4);
+    }
+  } else {
+    ctx.fillStyle = '#0A3F62';
+    ctx.fillRect(px, 432, pw, 53);
+    const t = Date.now() / 700;
+    ctx.fillStyle = 'rgba(120,210,255,0.18)';
+    for (let i = 0; i < 7; i++) { const bx = px + ((t * 60 + i * 65) % pw); ctx.fillRect(bx, 432, 38, 4); }
+    ctx.fillStyle = 'rgba(120,210,255,0.09)';
+    for (let i = 0; i < 5; i++) { const bx = px + ((t * 35 + i * 88) % pw); ctx.fillRect(bx, 442, 55, 3); }
+  }
+}
+
+function drawBoss() {
+  if (!boss || boss.dead) return;
+
+  const snoutX = sx(700);
+  const by     = 408;
+
+  // Tongue
+  if (boss.tongueLen > 2) {
+    const tl = boss.tongueLen, ty = by + 26;
+    ctx.fillStyle = '#D0507A';
+    ctx.fillRect(snoutX - tl, ty - 5, tl, 10);
+    ctx.fillStyle = '#E87090';
+    ctx.beginPath();
+    ctx.moveTo(snoutX - tl, ty - 5); ctx.lineTo(snoutX - tl - 13, ty - 11); ctx.lineTo(snoutX - tl - 4, ty); ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(snoutX - tl, ty + 5); ctx.lineTo(snoutX - tl - 13, ty + 11); ctx.lineTo(snoutX - tl - 4, ty); ctx.fill();
+  }
+
+  const HW = 70, BW = 90, TW = 30;
+
+  // Tail
+  ctx.strokeStyle = '#267826'; ctx.lineWidth = 18; ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(snoutX + HW + BW, by + 10);
+  ctx.lineTo(snoutX + HW + BW + TW, by + 32);
+  ctx.lineTo(snoutX + HW + BW, by + 54);
+  ctx.stroke();
+
+  // Body
+  ctx.fillStyle = '#267826';
+  ctx.fillRect(snoutX + HW - 4, by + 8, BW + 4, 48);
+  ctx.fillStyle = '#C8E870';
+  for (let i = 0; i < 3; i++) {
+    const bsx = snoutX + HW + i * 17;
+    ctx.fillRect(bsx + 4, by + 12, 12, 36);
+  }
+  for (let i = 0; i < 3; i++) {
+    const bsx = snoutX + HW + 8 + i * 17;
+    ctx.fillRect(bsx + 2, by + 15, 8, 29);
+  }
+
+  // Jaw open amount
+  const jg = boss.state === 'tongue'    && boss.tongueLen > 8 ? 1.0
+           : boss.state === 'claw'      && boss.stateTimer > 10 ? 0.8
+           : boss.state === 'waterballs'                        ? 0.35 : 0;
+
+  // Upper jaw / head
+  ctx.fillStyle = '#267826';
+  ctx.beginPath();
+  ctx.moveTo(snoutX, by + 20 - jg * 0.55);
+  ctx.lineTo(snoutX + HW, by + 8);
+  ctx.lineTo(snoutX + HW, by + 38);
+  ctx.lineTo(snoutX, by + 38);
+  ctx.closePath(); ctx.fill();
+
+  // Eye
+  ctx.fillStyle = '#FFD700';
+  ctx.beginPath(); ctx.arc(snoutX + 50, by + 14, 9, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#000';
+  ctx.beginPath(); ctx.arc(snoutX + 52, by + 15, 5, 0, Math.PI * 2); ctx.fill();
+
+  // Lower jaw
+  ctx.fillStyle = '#1B6020';
+  ctx.beginPath();
+  ctx.moveTo(snoutX, by + 38 + jg * 22);
+  ctx.lineTo(snoutX + HW, by + 38);
+  ctx.lineTo(snoutX + HW, by + 52);
+  ctx.lineTo(snoutX, by + 52 + jg * 22);
+  ctx.closePath(); ctx.fill();
+
+  // Teeth
+  ctx.fillStyle = '#FFFFF0';
+  for (let i = 0; i < 4; i++) {
+    const tx = snoutX + 8 + i * 13;
+    ctx.beginPath(); ctx.moveTo(tx, by + 38 - jg * 0.55); ctx.lineTo(tx + 5, by + 48 - jg * 0.55); ctx.lineTo(tx + 10, by + 38 - jg * 0.55); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(tx, by + 38 + jg * 22); ctx.lineTo(tx + 5, by + 28 + jg * 22); ctx.lineTo(tx + 10, by + 38 + jg * 22); ctx.fill();
+  }
+
+  // Legs
+  ctx.fillStyle = '#267826';
+  for (const lx of [snoutX + HW + 12, snoutX + HW + 55]) {
+    ctx.fillRect(lx, by + 52, 16, 20);
+    ctx.fillRect(lx - 4, by + 68, 24, 10);
+  }
+
+  // Claw attack
+  if (boss.state === 'claw' && boss.stateTimer > 10 && boss.stateTimer < 80) {
+    const tIn  = Math.min((boss.stateTimer - 10) / 15, 1);
+    const tOut = boss.stateTimer > 45 ? Math.min((boss.stateTimer - 45) / 20, 1) : 0;
+    const reach = (tIn - tOut) * 480;
+    const cx2 = snoutX - reach, cy = by + 50;
+    ctx.strokeStyle = '#267826'; ctx.lineWidth = 9; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(snoutX + 8, by + 52);
+    ctx.quadraticCurveTo(snoutX - reach * 0.45, cy - 14, cx2 + 16, cy); ctx.stroke();
+    ctx.fillStyle = '#1B5C1B';
+    ctx.beginPath(); ctx.arc(cx2 + 13, cy, 13, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#D0D050'; ctx.lineWidth = 2.5;
+    for (const [dx, dy] of [[-13, -5], [-16, 3], [-13, 11]]) {
+      ctx.beginPath(); ctx.moveTo(cx2 + 13, cy); ctx.lineTo(cx2 + 13 + dx, cy + dy); ctx.stroke();
+    }
+  }
+
+  // Dead — sinking
+  if (boss.dead) {
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, 1 - boss.sinkY / 30);
+    ctx.translate(0, boss.sinkY);
+    ctx.restore();
+  }
+
+  // Hit flash
+  if (boss.hitFlash > 0) {
+    ctx.save();
+    ctx.globalAlpha = (boss.hitFlash / 20) * 0.6;
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillRect(snoutX, by, HW + BW + TW, 70);
+    ctx.restore();
+  }
+
+  // Water balls
+  for (const pb of bossProjectiles) {
+    ctx.fillStyle = '#3CA8D4';
+    ctx.beginPath(); ctx.arc(sx(pb.x), pb.y, 9, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#7FD8F8';
+    ctx.beginPath(); ctx.arc(sx(pb.x) - 3, pb.y - 3, 4, 0, Math.PI * 2); ctx.fill();
+  }
+}
+
+function drawBossHP() {
+  if (!boss || boss.dead) return;
+  const barW = 280, barH = 18;
+  const bx = (W - barW) / 2, barY = 12;
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.beginPath(); ctx.roundRect(bx - 10, barY - 8, barW + 20, barH + 34, 6); ctx.fill();
+  ctx.font = 'bold 18px monospace'; ctx.textAlign = 'center'; ctx.fillStyle = '#FF6060';
+  ctx.fillText('GRAND CHOMPY', W / 2, barY + 10);
+  ctx.fillStyle = '#3A1010';
+  ctx.fillRect(bx, barY + 16, barW, barH);
+  ctx.fillStyle = '#CC2020';
+  ctx.fillRect(bx, barY + 16, barW * (boss.hp / boss.maxHp), barH);
+  ctx.textAlign = 'left';
 }
 
 // ── Draw helpers ─────────────────────────────────────────────────────────────
@@ -936,7 +1397,19 @@ function drawPlatforms() {
     const px = sx(p.x);
     if (px + p.w < -10 || px > W + 10) continue;
 
-    if (currentLevelIdx === 1) {
+    if (currentLevelIdx === 2) {
+      // Stone cave ledge
+      ctx.fillStyle = '#3A3530';
+      ctx.fillRect(px, p.y, p.w, p.h);
+      ctx.fillStyle = '#4A4540';
+      ctx.fillRect(px, p.y, p.w, 4);
+      ctx.fillStyle = '#2A2520';
+      ctx.fillRect(px, p.y + p.h - 2, p.w, 2);
+      ctx.fillStyle = '#302C28';
+      for (let rx = px + 12; rx < px + p.w - 6; rx += 22) {
+        ctx.fillRect(rx, p.y + 6, 10, 4);
+      }
+    } else if (currentLevelIdx === 1) {
       // Wood plank body
       ctx.fillStyle = '#7B4A12';
       ctx.fillRect(px, p.y, p.w, p.h);
@@ -1421,7 +1894,10 @@ function drawOverlay() {
     ctx.fillText('Space to resume', W / 2, H / 2 + 100);
     return;
   }
+  const isLastLevel = currentLevelIdx >= LEVELS.length - 1;
   if (!gameOver && !won) return;
+  if (won && isLastLevel) return;
+  if (won && currentLevelIdx === 1) return;
   ctx.fillStyle = 'rgba(0,0,0,0.72)';
   ctx.fillRect(0, 0, W, H);
 
@@ -2025,15 +2501,18 @@ function loop(timestamp) {
     else drawCutscene();
   } else {
     update(dt);
-    if (currentLevelIdx === 0) drawBG(); else drawBG2();
+    if (currentLevelIdx === 2) drawBossRoomBG();
+    else if (currentLevelIdx === 0) drawBG(); else drawBG2();
     drawPlatforms();
     drawCave();
+    if (currentLevelIdx === 2) { drawPond(); drawBoss(); }
     drawParticles();
     for (const e of enemies) {
       if (e.alive) { if (e.type === 'leopard') drawLeopard(e); else drawEnemy(e); }
     }
     drawPlayer();
     drawHUD();
+    if (currentLevelIdx === 2) drawBossHP();
     drawOverlay();
   }
 
