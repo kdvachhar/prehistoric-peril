@@ -13,7 +13,7 @@ ctx.imageSmoothingEnabled = false;
 ctx.scale(1 / PSCALE, 1 / PSCALE);
 
 // ── Levels ───────────────────────────────────────────────────────────────────
-const LEVELS = [LEVEL1, LEVEL2, LEVEL3];
+const LEVELS = [LEVEL1, LEVEL2, LEVEL3, LEVEL4];
 let currentLevelIdx = 0;
 let currentLevel    = LEVELS[0];
 
@@ -660,6 +660,10 @@ let bossProjectiles = [];
 let bossTriggered   = false;
 let bossHeart       = null;
 
+let volcanoRock   = null;
+let volcanoLavaX  = 99999;
+let volcanoActive = false;
+
 function initBoss() {
   return {
     hp: 10, maxHp: 10, state: 'idle', stateTimer: 0, attackIdx: 0,
@@ -679,6 +683,10 @@ function resetGame() {
   wonTimer = 0;
   enemies = currentLevel.createEnemies();
   boss = null; bossProjectiles = []; bossTriggered = false; bossHeart = null;
+  volcanoRock = null; volcanoLavaX = 99999; volcanoActive = false;
+  if (currentLevelIdx === 3) {
+    volcanoRock = { x: 5090, y: 370, w: 90, h: 90, hp: 3, maxHp: 3, hitFlash: 0, hitCooldown: 0 };
+  }
   stopCutsceneMusic();
   stopVictoryMusic();
   stopBossMusic();
@@ -904,6 +912,140 @@ function update(dt = 1) {
 
   const bossCleared = currentLevelIdx !== 2 || (boss && boss.dead);
   if (bossCleared && overlaps(player, currentLevel.cave)) { won = true; saveGame(); stopMusic(); startVictoryMusic(); }
+
+  if (currentLevelIdx === 3) updateVolcano(dt);
+}
+
+// ── Volcano sequence (level 4) ────────────────────────────────────────────────
+function updateVolcano(dt) {
+  if (volcanoRock) {
+    if (volcanoRock.hitCooldown > 0) volcanoRock.hitCooldown -= dt;
+    if (volcanoRock.hitFlash    > 0) volcanoRock.hitFlash    -= dt;
+    if (player.swinging && player.swingFrame >= SWING_HIT_START && player.swingFrame <= SWING_HIT_END
+        && volcanoRock.hitCooldown <= 0) {
+      const bat = batHitbox();
+      if (overlaps(bat, volcanoRock)) {
+        volcanoRock.hp--;
+        volcanoRock.hitCooldown = 20;
+        volcanoRock.hitFlash    = 15;
+        burst(volcanoRock.x + 45, volcanoRock.y + 40, ['#886644','#AAAAAA','#554422'], 12);
+        if (volcanoRock.hp <= 0) {
+          volcanoRock   = null;
+          volcanoActive = true;
+          volcanoLavaX  = 5800;
+          burst(5135, 415, ['#FF4400','#FF8800','#FFAA00'], 30);
+        }
+      }
+    }
+  }
+
+  if (!volcanoActive) return;
+
+  volcanoLavaX -= 3.5 * dt;
+
+  // Consume enemies the lava has passed
+  for (const e of enemies) {
+    if (e.alive && e.x + e.w > volcanoLavaX) {
+      e.alive = false;
+      burst(e.x + e.w / 2, e.y + e.h / 2, ['#FF4400','#FF8800'], 8);
+    }
+  }
+
+  // Kill player if lava catches them
+  if (player.x + player.w > volcanoLavaX && player.invincible <= 0) {
+    player.hp = 0;
+    gameOver = true;
+    stopBossMusic();
+    stopMusic();
+  }
+
+  // Win: player escapes through the vent at the top of the level
+  if (player.y < 0 && player.x + player.w > 2620 && player.x < 2780) {
+    won = true;
+    saveGame();
+    stopBossMusic();
+    stopMusic();
+    startVictoryMusic();
+  }
+}
+
+function drawVolcanoRock() {
+  if (!volcanoRock) return;
+  const rx = sx(volcanoRock.x);
+  const ry = volcanoRock.y;
+  const flash = volcanoRock.hitFlash > 0;
+
+  ctx.fillStyle = flash ? '#FFFFFF' : '#221408';
+  ctx.beginPath(); ctx.ellipse(rx + 45, ry + 52, 50, 52, 0, 0, Math.PI * 2); ctx.fill();
+
+  if (!flash) {
+    ctx.fillStyle = '#110A04';
+    ctx.beginPath(); ctx.ellipse(rx + 58, ry + 62, 36, 38, 0.3, 0, Math.PI * 2); ctx.fill();
+    // Cracks with lava glow
+    const pulse = 0.5 + 0.5 * Math.sin(Date.now() / 400);
+    ctx.strokeStyle = `rgba(255,${60 + pulse * 60 | 0},0,${0.6 + pulse * 0.3})`;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(rx + 28, ry + 18); ctx.lineTo(rx + 38, ry + 46); ctx.lineTo(rx + 32, ry + 64); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(rx + 52, ry + 12); ctx.lineTo(rx + 48, ry + 40); ctx.lineTo(rx + 58, ry + 68); ctx.stroke();
+  }
+
+  // HP pips
+  for (let i = 0; i < volcanoRock.maxHp; i++) {
+    ctx.fillStyle = i < volcanoRock.hp ? '#FF5500' : '#330000';
+    ctx.fillRect(rx + 12 + i * 24, ry - 20, 18, 9);
+  }
+}
+
+function drawLavaWall() {
+  if (!volcanoActive) return;
+  const wx = sx(volcanoLavaX);
+  if (wx >= W) return;
+  const x0 = Math.max(wx, 0);
+
+  // Background fill
+  const g = ctx.createLinearGradient(wx, 0, wx + 120, 0);
+  g.addColorStop(0,   '#FFEE88');
+  g.addColorStop(0.08,'#FF6600');
+  g.addColorStop(0.4, '#CC2200');
+  g.addColorStop(1,   '#880A00');
+  ctx.fillStyle = g;
+  ctx.fillRect(x0, 0, W - x0, H);
+
+  // Bright leading edge
+  if (wx >= 0) {
+    ctx.fillStyle = '#FFFFFF'; ctx.fillRect(wx, 0, 4, H);
+    ctx.fillStyle = '#FFEE44'; ctx.fillRect(wx + 4, 0, 10, H);
+  }
+
+  // Lava bubbles on leading face
+  const t = Date.now() / 250;
+  ctx.fillStyle = '#FF9900';
+  for (let i = 0; i < 10; i++) {
+    const by = ((i * 65 + t * 55) % (H + 20)) - 10;
+    ctx.beginPath(); ctx.arc(wx + 18 + Math.sin(t + i * 1.3) * 14, by, 10 + Math.sin(t * 2 + i) * 4, 0, Math.PI * 2); ctx.fill();
+  }
+}
+
+function drawVentOpening() {
+  const ventX = sx(2620);
+  const ventW  = 160;
+  if (ventX + ventW < 0 || ventX > W) return;
+  const pulse = 0.5 + 0.5 * Math.sin(Date.now() / 350);
+  const alpha = volcanoActive ? 0.55 + pulse * 0.35 : 0.2 + pulse * 0.1;
+  const g = ctx.createLinearGradient(0, 0, 0, 60);
+  g.addColorStop(0,   `rgba(255,${180 + pulse * 60 | 0},0,${alpha})`);
+  g.addColorStop(1,   'rgba(255,80,0,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(ventX, 0, ventW, 60);
+  // Arrow pointing up when lava is active
+  if (volcanoActive) {
+    ctx.fillStyle = `rgba(255,255,100,${0.6 + pulse * 0.4})`;
+    ctx.beginPath();
+    const ax = ventX + ventW / 2;
+    const ay = 55 + Math.sin(Date.now() / 200) * 6;
+    ctx.moveTo(ax, ay - 20); ctx.lineTo(ax - 14, ay); ctx.lineTo(ax + 14, ay);
+    ctx.closePath(); ctx.fill();
+  }
 }
 
 // ── updateBoss ────────────────────────────────────────────────────────────────
@@ -1408,6 +1550,113 @@ function drawBG2() {
   ctx.fillRect(0, H - 60, W, 6);
 }
 
+function drawBG4() {
+  // Base — deep volcanic rock
+  const sky = ctx.createLinearGradient(0, 0, 0, H);
+  sky.addColorStop(0,    '#0A0000');
+  sky.addColorStop(0.35, '#1A0500');
+  sky.addColorStop(0.7,  '#2D0A00');
+  sky.addColorStop(1,    '#3D0E00');
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, W, H);
+
+  // Glowing lava river at the bottom
+  const lavaT = Date.now() / 900;
+  const lavaBg = ctx.createLinearGradient(0, H - 55, 0, H);
+  lavaBg.addColorStop(0, '#CC3300');
+  lavaBg.addColorStop(0.5, '#FF6600');
+  lavaBg.addColorStop(1, '#FF8800');
+  ctx.fillStyle = lavaBg;
+  ctx.fillRect(0, H - 55, W, 55);
+
+  // Lava surface shimmer
+  ctx.fillStyle = 'rgba(255,200,50,0.22)';
+  for (let i = 0; i < 9; i++) {
+    const bx = ((lavaT * 70 + i * 130) % (W + 80)) - 40;
+    ctx.fillRect(bx, H - 55, 70, 5);
+  }
+  ctx.fillStyle = 'rgba(255,255,150,0.12)';
+  for (let i = 0; i < 6; i++) {
+    const bx = ((lavaT * 45 + i * 180) % (W + 80)) - 40;
+    ctx.fillRect(bx, H - 52, 100, 3);
+  }
+
+  // Glow from lava onto cave walls
+  const glowH = ctx.createLinearGradient(0, H - 200, 0, H - 55);
+  glowH.addColorStop(0, 'rgba(200,60,0,0)');
+  glowH.addColorStop(1, 'rgba(200,60,0,0.18)');
+  ctx.fillStyle = glowH;
+  ctx.fillRect(0, H - 200, W, 145);
+
+  // Far stalactites — slow parallax
+  const p1off = camX * 0.06;
+  ctx.fillStyle = '#1A0800';
+  const stalactites = [60, 190, 320, 470, 610, 760, 910, 1060, 1210];
+  for (let i = 0; i < stalactites.length; i++) {
+    const bx = ((stalactites[i] - p1off % (W + 180) + W + 180)) % (W + 180) - 90;
+    const h2 = 60 + Math.sin(i * 1.7) * 25;
+    ctx.beginPath();
+    ctx.moveTo(bx, 0);
+    ctx.lineTo(bx + 32, 0);
+    ctx.lineTo(bx + 16, h2);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // Mid rock columns/formations
+  const p2off = camX * 0.14;
+  ctx.fillStyle = '#120500';
+  const cols = [100, 260, 420, 600, 780, 950, 1120];
+  for (let i = 0; i < cols.length; i++) {
+    const bx = ((cols[i] - p2off % (W + 250) + W + 250)) % (W + 250) - 125;
+    const h2 = 80 + Math.sin(i * 2.3) * 30;
+    ctx.beginPath();
+    ctx.moveTo(bx, 0); ctx.lineTo(bx + 44, 0); ctx.lineTo(bx + 22, h2);
+    ctx.closePath(); ctx.fill();
+  }
+
+  // Glowing lava cracks in cave walls — mid parallax
+  const crackOff = camX * 0.18;
+  const cracks = [40, 170, 310, 450, 610, 750, 900, 1050];
+  for (let i = 0; i < cracks.length; i++) {
+    const bx = ((cracks[i] - crackOff % (W + 200) + W + 200)) % (W + 200) - 100;
+    const pulse = 0.5 + 0.5 * Math.sin(lavaT * 2.1 + i * 1.4);
+    ctx.strokeStyle = `rgba(255,${80 + pulse * 80 | 0},0,${0.5 + pulse * 0.4})`;
+    ctx.lineWidth = 2 + pulse * 2;
+    const cy2 = 80 + Math.sin(i * 0.9) * 60;
+    ctx.beginPath();
+    ctx.moveTo(bx, cy2);
+    ctx.lineTo(bx + 8,  cy2 + 22);
+    ctx.lineTo(bx + 3,  cy2 + 38);
+    ctx.lineTo(bx + 12, cy2 + 58);
+    ctx.stroke();
+  }
+
+  // Foreground near stalactites — fastest parallax
+  const p3off = camX * 0.28;
+  ctx.fillStyle = '#0A0200';
+  const nearStals = [30, 160, 310, 480, 640, 800, 960, 1120];
+  for (let i = 0; i < nearStals.length; i++) {
+    const bx = ((nearStals[i] - p3off % (W + 200) + W + 200)) % (W + 200) - 100;
+    const h2 = 40 + Math.sin(i * 2.8) * 18;
+    ctx.beginPath();
+    ctx.moveTo(bx, 0); ctx.lineTo(bx + 24, 0); ctx.lineTo(bx + 12, h2);
+    ctx.closePath(); ctx.fill();
+  }
+
+  // Floating embers
+  const emberT = Date.now() / 1000;
+  ctx.fillStyle = '#FF8800';
+  for (let i = 0; i < 18; i++) {
+    const ex = ((i * 137 + camX * 0.4 + Math.sin(emberT + i) * 18) % (W + 40) + W + 40) % (W + 40) - 20;
+    const ey = H - 55 - ((emberT * 40 + i * 61) % (H - 55));
+    const alpha = 0.3 + 0.4 * Math.sin(emberT * 3 + i * 0.8);
+    ctx.globalAlpha = alpha;
+    ctx.beginPath(); ctx.arc(ex, ey, 2 + Math.sin(i) * 1, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
 // Platforms (dirt + grass, or wood planks for level 2 elevated)
 function drawPlatforms() {
   for (const p of currentLevel.platforms) {
@@ -1425,6 +1674,19 @@ function drawPlatforms() {
       ctx.fillStyle = '#302C28';
       for (let rx = px + 12; rx < px + p.w - 6; rx += 22) {
         ctx.fillRect(rx, p.y + 6, 10, 4);
+      }
+    } else if (currentLevelIdx === 3) {
+      // Volcanic rock ledge — dark basalt with glowing edge
+      ctx.fillStyle = '#1A0A00';
+      ctx.fillRect(px, p.y, p.w, p.h);
+      ctx.fillStyle = '#2A1000';
+      ctx.fillRect(px, p.y, p.w, 4);
+      const pulse = 0.5 + 0.5 * Math.sin(Date.now() / 600 + p.x * 0.01);
+      ctx.fillStyle = `rgba(255,${60 + pulse * 40 | 0},0,${0.35 + pulse * 0.2})`;
+      ctx.fillRect(px, p.y + p.h - 3, p.w, 3);
+      ctx.fillStyle = '#140800';
+      for (let rx = px + 10; rx < px + p.w - 5; rx += 20) {
+        ctx.fillRect(rx, p.y + 6, 8, 3);
       }
     } else if (currentLevelIdx === 1) {
       // Wood plank body
@@ -1858,6 +2120,55 @@ function drawLeopard(e) {
   ctx.filter = 'none';
   ctx.globalAlpha = 1;
   ctx.restore();
+}
+
+function drawMosquito(e) {
+  const ex = sx(e.x + e.w / 2);
+  const ey = e.y + e.h / 2;
+  const wt = e.wingT || 0;
+  const flash = e.hitFlash > 0;
+
+  // Wings
+  const wingY = Math.abs(Math.sin(wt * 0.5)) * 10 + 3;
+  ctx.save();
+  ctx.globalAlpha = flash ? 1 : 0.55;
+  ctx.fillStyle = flash ? '#FFFFFF' : '#B8E0FF';
+  ctx.beginPath(); ctx.ellipse(ex - 9, ey - wingY, 13, 5, -0.25, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(ex + 6, ey - wingY, 13, 5,  0.25, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+
+  // Body
+  ctx.fillStyle = flash ? '#FFFFFF' : '#1E1008';
+  ctx.beginPath(); ctx.ellipse(ex, ey, 12, 5, 0, 0, Math.PI * 2); ctx.fill();
+
+  // Abdomen stripe
+  if (!flash) {
+    ctx.fillStyle = '#3A2010';
+    ctx.beginPath(); ctx.ellipse(ex + 4, ey + 1, 6, 3, 0, 0, Math.PI * 2); ctx.fill();
+  }
+
+  // Proboscis pointing at player
+  const pdx = (player.x + player.w / 2) - (e.x + e.w / 2);
+  const pdy = (player.y + player.h / 2) - (e.y + e.h / 2);
+  const pang = Math.atan2(pdy, pdx);
+  ctx.strokeStyle = flash ? '#FFFFFF' : '#0A0500';
+  ctx.lineWidth = 1.5; ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(ex + Math.cos(pang) * 12, ey + Math.sin(pang) * 5);
+  ctx.lineTo(ex + Math.cos(pang) * 24, ey + Math.sin(pang) * 11);
+  ctx.stroke();
+
+  // Eyes
+  ctx.fillStyle = '#FF1010';
+  ctx.beginPath(); ctx.arc(ex + 9, ey - 2, 3, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#000';
+  ctx.beginPath(); ctx.arc(ex + 10, ey - 2, 1.2, 0, Math.PI * 2); ctx.fill();
+
+  // HP pips
+  for (let i = 0; i < e.maxHp; i++) {
+    ctx.fillStyle = i < e.hp ? '#FF3030' : '#333';
+    ctx.fillRect(ex - 10 + i * 11, ey - 20, 8, 4);
+  }
 }
 
 // HUD
@@ -2519,13 +2830,20 @@ function loop(timestamp) {
   } else {
     update(dt);
     if (currentLevelIdx === 2) drawBossRoomBG();
+    else if (currentLevelIdx === 3) drawBG4();
     else if (currentLevelIdx === 0) drawBG(); else drawBG2();
+    if (currentLevelIdx === 3) drawVentOpening();
     drawPlatforms();
     drawCave();
     if (currentLevelIdx === 2) { drawPond(); drawBoss(); }
+    if (currentLevelIdx === 3) { drawVolcanoRock(); drawLavaWall(); }
     drawParticles();
     for (const e of enemies) {
-      if (e.alive) { if (e.type === 'leopard') drawLeopard(e); else drawEnemy(e); }
+      if (e.alive) {
+        if (e.type === 'leopard') drawLeopard(e);
+        else if (e.type === 'mosquito') drawMosquito(e);
+        else drawEnemy(e);
+      }
     }
     drawPlayer();
     if (bossHeart) {
